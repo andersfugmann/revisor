@@ -1,0 +1,41 @@
+# .PHONY: all install clean
+NATIVE_ENABLED = true
+BYTE_ENABLED = true
+
+# Various options
+#
+# OCAMLFLAGS    +=
+# OCAMLCFLAGS   +=
+# OCAMLOPTFLAGS +=
+# OCAML_LINK_FLAGS +=
+# OCAML_BYTE_LINK_FLAGS +=
+# OCAML_NATIVE_LINK_FLAGS +=
+
+################################################
+# Generated files
+#
+# Workaround for the fact that ocamldep does not pay attention to .mll
+# and .mly files.
+#
+OCamlGeneratedFiles(parser.ml lexer.ml)
+
+mkdir -p _build
+vmount(-l, src/, _build/)
+.SUBDIRS: _build
+  FILES[] =
+
+USE_OCAMLFIND = true
+
+OCAMLPACKS[] =
+    batteries
+
+FILES[] =
+   _build/revisor
+
+PROGRAM = revisor
+OCAML_LIBS +=
+OCAML_CLIBS +=
+OCAML_OTHER_LIBS +=
+OCAML_LIB_FLAGS +=
+
+.DEFAULT: $(OCamlProgram $(PROGRAM), $(FILES))
