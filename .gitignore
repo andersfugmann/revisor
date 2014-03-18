@@ -1,0 +1,9 @@
+*.cm*
+*.omc
+*.o
+*.opt
+*.run
+revisor
+\#*
+*~
+.omakedb*
