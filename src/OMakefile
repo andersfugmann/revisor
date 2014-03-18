@@ -1,0 +1,15 @@
+FILES[] =
+	revisor
+
+USE_OCAMLFIND = true
+
+OCAMLPACKS[] =
+    batteries
+
+PROGRAM = revisor
+OCAML_LIBS +=
+OCAML_CLIBS +=
+OCAML_OTHER_LIBS +=
+OCAML_LIB_FLAGS +=
+
+.DEFAULT: $(OCamlProgram $(PROGRAM), $(FILES))
