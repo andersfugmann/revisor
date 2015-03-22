@@ -27,7 +27,7 @@ type event =
   | Stop of string
 
 let now () = Unix.gettimeofday () |> truncate
-let log fmt = Printf.eprintf (fmt ^^ "\n")
+let log fmt = Printf.eprintf (fmt ^^ "\n%!")
 
 (* Just process state change requests. Cannot be used to enable / disable processes *)
 let process_event event =
@@ -130,7 +130,7 @@ let handle_child_death queue _ =
   | _, Unix.WSTOPPED _ -> ()
   | pid, Unix.WEXITED _
   | pid, Unix.WSIGNALED _ ->
-    log "Received term signal for pid %d" pid;
+    log "Received term signal for pid %d: %d" pid (now ());
     Queue.add (Term pid) queue
 
 (*
