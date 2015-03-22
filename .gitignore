@@ -7,3 +7,6 @@ revisor
 \#*
 *~
 .omakedb*
+_build
+log/*.log
+log/*.err

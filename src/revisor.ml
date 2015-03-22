@@ -1,70 +1,140 @@
-(*
-A list of known process definitions.
-
-If a process dies, we get sig_child and stop the process.
-A message is posted on the command list to start the process again.
-
-
-Process description should have a list of processes, as we want to
-start N processes
-
-We dont like daemon processes.
-
-We dont want to optimize for speed (lookups) yet.
-
-All running processes creates a file in /var/run/revisor.
-If the revisor is restarted, we reload all the pids.
-
-Commands are put on a prio-queue to be executed after a given time.
-
-*)
-
 open Batteries
 
-type process_description =
-  { name: string;
-    mutable pid: int option;
-    command: string;
-    args: string array;
-  }
+(* Everything is keys on pd.name. That is unique *)
+type pid = int
+type ts = int
+type current_state = Running of pid * pid list * ts
+                   | Stopping of pid option * pid list * ts
+                   (* | Starting of ts (* This state is used if we need to monitor a daemon process *) *)
+                   | Stopped of ts
 
-type events =
-| Exited of int (* Pid *)
-| Start of string (* Name *)
+(* The target state could hold information about restarts etc. *)
+type target_state = Enabled
+                  | Disabled
 
+type state = {
+  target_state: target_state;
+  current_state: current_state;
+}
 
+let process_tbl = Hashtbl.create 0 (* name -> process decription *)
+let state_tbl = Hashtbl.create 0 (* name -> state *)
+let pid_tbl = Hashtbl.create 0 (* pid -> name *)
 
-type t = process_description list
+type event =
+  | Term of pid
+  | Start of string
+  | Stop of string
 
-let start_process pd =
-  match Unix.fork () with
-  | 0 -> (* Child *)
+let now () = Unix.gettimeofday () |> truncate
+let log fmt = Printf.eprintf (fmt ^^ "\n")
+
+(* Just process state change requests. Cannot be used to enable / disable processes *)
+let process_event event =
+  let now = now () in
+  let name, new_c_state = match event with
+    | Term s_pid ->
+      begin
+        let name = Hashtbl.find pid_tbl s_pid in
+        let state = Hashtbl.find state_tbl name in
+        name, match state.current_state with
+        | Running (pid, pids, ts) when s_pid = pid ->
+          log "Received signal from %s (%d)" name pid;
+          log "Process was running for %d secs" (now - ts);
+          Hashtbl.remove pid_tbl pid;
+          List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+          Stopping (None, pids, now)
+        | Running (pid, pids, ts) when List.mem pid pids ->
+          log "Failure: one of the redirect processes for %s died" name;
+          log "Process was running for %d secs" (now - ts);
+          let pids = List.filter ((<>) s_pid) pids in
+          Unix.kill pid Sys.sigterm;
+          Stopping (Some pid, pids, now)
+
+        | Stopping (Some pid, pids, ts) when s_pid = pid ->
+          log "Process %s took %d secs to stop" name (now - ts);
+          List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+          Stopping (None, pids, ts)
+
+        | Stopping (pid, pids, ts) when List.mem s_pid pids ->
+          let pids = List.filter ((<>) s_pid) pids in
+          log "pipe stopped for %s after %d secs" name (now - ts);
+          Stopping (pid, pids, ts)
+
+        | _ -> failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
+      end
+    | Start name ->
+      begin
+        let state = Hashtbl.find state_tbl name in
+        name, match state.current_state with
+        | (Running _) as s -> s
+        | (Stopping _) as s -> s
+        | Stopped ts ->
+          (* Start the process *)
+          log "Starting process %s. In stopped state for %d seconds" name (now - ts);
+          let pd = Hashtbl.find process_tbl name in
+          let (pid, pids) =  Process.start pd in
+          List.iter (fun p -> Hashtbl.add pid_tbl p name) (pid :: pids);
+          Running (pid, pids, now)
+      end
+    | Stop name ->
+      begin
+        let state = Hashtbl.find state_tbl name in
+        name, match state.current_state with
+        | Running (pid, pids, ts) ->
+          log "Stopping process: %s. Running time: %d secs." name (now - ts);
+          Unix.kill pid Sys.sigterm;
+          Stopping (Some pid, pids, now)
+        | Stopping (None, [], ts) ->
+          log "Process %s entered stopped state after %d secs." name (now - ts);
+          Stopped now
+        | Stopping _ as s -> s
+        | Stopped _ as s -> s
+      end
+  in
+  (* What is name???? *)
+  let state = Hashtbl.find state_tbl name in
+  Hashtbl.replace state_tbl name
+    { state with current_state = new_c_state }
+
+let check name = function
+  | { current_state = Stopping (_, _, ts); _ } when ts + 5 < (now ()) ->
+    Some (Stop name)
+  | { current_state = Stopping (None, [], _); _ } ->
+    Some (Stop name)
+  | { current_state = Running _; target_state = Disabled } ->
+    Some (Stop name)
+  | { current_state = Stopped _; target_state = Enabled } ->
+    Some (Start name)
+  | _ -> None
+
+let rec event_loop queue =
+  match Queue.Exceptionless.take queue with
+  | Some event ->
+    process_event event;
+    event_loop queue
+  | None ->
+    state_tbl
+    |> Hashtbl.enum
+    |> Enum.filter_map (uncurry check)
+    |> Enum.iter (fun e -> Queue.push e queue);
     begin
-      Printf.eprintf "Started child.\n%!";
-      try
-        Unix.execv pd.command pd.args
-      with
-      | e -> Printf.eprintf "execv failed: %s\n%!" (Printexc.to_string e)
-    end
-  | pid ->
-    Printf.eprintf "Forked child pid: %d\n%!" pid;
-    pd.pid <- Some pid
+      match Queue.is_empty queue with
+      | true -> Unix.sleep 1;
+      | false -> ()
+    end;
+    event_loop queue
 
-let tasks = Queue.create ()
-let processes = ref []
-
-let find = function
-  | `Name n -> List.find (function { name; _ } -> name = n) !processes
-  | `Pid p -> List.find (function { pid; _ } -> pid = Some p) !processes
-
-let handle_child_death _ =
+let handle_child_death queue _ =
   match Unix.wait () with
   | _, Unix.WSTOPPED _ -> ()
   | pid, Unix.WEXITED _
   | pid, Unix.WSIGNALED _ ->
-    Queue.add (Exited pid) tasks
+    log "Received term signal for pid %d" pid;
+    Queue.add (Term pid) queue
 
-let rec check_pd = function
+(*
+let check_pd = function
   | { name; pid = Some pid; _ } as pd ->
     begin
       try Unix.kill pid 0 with
@@ -74,45 +144,35 @@ let rec check_pd = function
         Queue.add (Start name) tasks
     end
   | { name; pid = None; _ } ->
-    Printf.eprintf "Process not yet started: %s\n%!" name;
+    Printf.eprintf "Process not started: %s\n%!" name;
     Queue.add (Start name) tasks
-
-let handle_event = function
-  | Start name ->
-    Printf.eprintf "Starting process: %s\n%!" name;
-    let pd = find (`Name name) in
-    start_process pd
-  | Exited pid ->
-    let pd = find (`Pid pid) in
-    check_pd pd
-(*
-    (* Start it again immediatly *)
-  Printf.eprintf "Process died: %s\n%!" pd.name;
-    pd.pid <- None;
-  Queue.add (Start pd.name) tasks
 *)
-let rec process_events () =
-  let _ =
-    try
-      handle_event (Queue.take tasks);
-    with
-    | Queue.Empty ->
-      Unix.sleep 1
-  in
-  process_events ()
 
 let _ =
   Printf.eprintf "Revisor started\n%!";
-  Sys.(set_signal Sys.sigchld (Signal_handle handle_child_death));
+  let queue = Queue.create () in
+  Sys.(set_signal Sys.sigchld (Signal_handle (handle_child_death queue)));
 
+
+  let open Process in
   (* Construct a process description *)
-  let sleep = { name = "Sleep";
-                pid = None;
-                command = "/bin/sleep";
-                args = [| "sleep"; "5" |]
-              }
+  let processes =
+    [
+      { name = "sleep";
+        command = "/bin/sleep";
+        args = [| "sleep"; "5" |];
+        uid = None;
+        gid = None;
+        nice = None;
+        environment =  [];
+      }
+    ]
   in
+  let now = now () in
+  List.iter (fun pd ->
+      Hashtbl.add process_tbl pd.name pd;
+      Hashtbl.add state_tbl pd.name { current_state = Stopped now; target_state = Enabled})
+    processes;
 
-  processes := [ sleep ];
-  List.iter check_pd !processes;
-  process_events ()
+
+  event_loop queue

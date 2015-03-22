@@ -1,5 +1,5 @@
 # .PHONY: all install clean
-NATIVE_ENABLED = true
+NATIVE_ENABLED = false
 BYTE_ENABLED = true
 
 # Various options
@@ -11,11 +11,24 @@ BYTE_ENABLED = true
 # OCAML_BYTE_LINK_FLAGS +=
 # OCAML_NATIVE_LINK_FLAGS +=
 
-################################################
-# Generated files
-#
-# Workaround for the fact that ocamldep does not pay attention to .mll
-# and .mly files.
-#
-OCamlGeneratedFiles(parser.ml lexer.ml)
-.SUBDIRS: src
+#OCamlGeneratedFiles(parser.ml lexer.ml)
+# Use menhir if needed.
+# Alternative is to use json for configuration.
+
+OCAMLFLAGS = -thread -g -w @A-4-29-33-41-44-45 -bin-annot
+USE_OCAMLFIND = true
+
+OCAMLPACKS[] =
+    batteries
+
+mkdir -p _build
+vmount(-l, src, _build)
+.SUBDIRS: _build
+
+  FILES[] =
+	process
+	pipe
+
+  section:
+      PROGRAM = revisor
+      .DEFAULT: $(OCamlProgram $(PROGRAM), $(FILES) $(PROGRAM))

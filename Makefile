@@ -1,7 +1,7 @@
 .PHONY: all clean
 
 all:
-	omake
+	omake -w
 
 clean:
 	rm -fr revisor* _build *omc .omakedb*
