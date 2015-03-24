@@ -1,4 +1,5 @@
 open Batteries
+open Log
 
 type t =
   { name: string;
@@ -42,13 +43,13 @@ let start pd =
 
       (* Setup the environment. Currenly always inherit parent env *)
       List.iter (uncurry putenv) pd.environment;
-      Printf.eprintf "Started child.\n%!";
+      log "Started child.";
       try
         Unix.execv pd.command pd.args
       with
-      | e -> Printf.eprintf "execv failed: %s\n%!" (Printexc.to_string e);
+      | e -> log "execv failed: %s" (Printexc.to_string e);
         failwith "exec failed"
     end
   | pid ->
-    Printf.eprintf "Forked child pid: %d\n%!" pid;
+    log "Forked child pid: %d" pid;
     pid, (* [stdout_pid; stderr_pid] *) [];

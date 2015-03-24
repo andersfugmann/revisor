@@ -28,6 +28,7 @@ vmount(-l, src, _build)
   FILES[] =
 	process
 	pipe
+	log
 
   section:
       PROGRAM = revisor

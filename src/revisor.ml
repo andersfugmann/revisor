@@ -1,4 +1,5 @@
 open Batteries
+open Log
 
 (* Everything is keys on pd.name. That is unique *)
 type pid = int
@@ -27,8 +28,6 @@ type event =
   | Stop of string
 
 let now () = Unix.gettimeofday () |> truncate
-let log fmt = Printf.eprintf (fmt ^^ "\n%!")
-
 (* Just process state change requests. Cannot be used to enable / disable processes *)
 let process_event event =
   let now = now () in
@@ -125,13 +124,17 @@ let rec event_loop queue =
     end;
     event_loop queue
 
-let handle_child_death queue _ =
-  match Unix.wait () with
-  | _, Unix.WSTOPPED _ -> ()
+let rec handle_child_death queue signal =
+  match Unix.waitpid [ Unix.WNOHANG ] (-1) with
+  | 0, _ -> ()
+  | _, Unix.WSTOPPED _ -> handle_child_death queue signal
   | pid, Unix.WEXITED _
   | pid, Unix.WSIGNALED _ ->
-    log "Received term signal for pid %d: %d" pid (now ());
-    Queue.add (Term pid) queue
+    (* log "Received term signal for pid %d: %d" pid (now ()); *)
+    Queue.add (Term pid) queue;
+    handle_child_death queue signal
+  | exception e ->
+    log "Exception in signal handler: %s" (Printexc.to_string e)
 
 (*
 let check_pd = function
@@ -153,26 +156,24 @@ let _ =
   let queue = Queue.create () in
   Sys.(set_signal Sys.sigchld (Signal_handle (handle_child_death queue)));
 
-
+  let now = now () in
   let open Process in
-  (* Construct a process description *)
-  let processes =
-    [
-      { name = "sleep";
+  Random.enum_int 20
+  |> Enum.take 500
+  |> Enum.mapi (fun i sleep ->
+      let name = Printf.sprintf "sleep:%d:%d" i (sleep + 1) in
+      { name;
         command = "/bin/sleep";
-        args = [| "sleep"; "5" |];
+        args = [| name; string_of_int (sleep + 1) |];
         uid = None;
         gid = None;
         nice = None;
         environment =  [];
-      }
-    ]
-  in
-  let now = now () in
-  List.iter (fun pd ->
+      })
+  |> Enum.iter (fun pd ->
       Hashtbl.add process_tbl pd.name pd;
-      Hashtbl.add state_tbl pd.name { current_state = Stopped now; target_state = Enabled})
-    processes;
-
+      Hashtbl.add state_tbl pd.name
+        { current_state = Stopped now; target_state = Enabled}
+    );
 
   event_loop queue
