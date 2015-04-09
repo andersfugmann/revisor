@@ -25,10 +25,15 @@ mkdir -p _build
 vmount(-l, src, _build)
 .SUBDIRS: _build
 
+  StaticCLibrary(extern, extern)
+
   FILES[] =
 	process
 	pipe
 	log
+	extern
+
+  OCAML_CLIBS[] += extern
 
   section:
       PROGRAM = revisor

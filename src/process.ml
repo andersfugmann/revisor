@@ -24,22 +24,20 @@ let redirect ?uid ?gid ?nice filename =
 
 let start pd =
   let open Unix in
-  (*
   let (stdout_pid, new_stdout) =
     redirect ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.log" pd.name)
   in
   let (stderr_pid, new_stderr) =
     redirect ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.err" pd.name)
   in
-*)
   match Unix.fork () with
   | 0 ->
     begin
       Option.may setuid pd.uid;
       Option.may setgid pd.gid;
       Option.may (nice %> ignore) pd.nice;
-      (* dup2 new_stderr stderr;
-         dup2 new_stdout stdout; *)
+      dup2 new_stderr stderr;
+      dup2 new_stdout stdout;
 
       (* Setup the environment. Currenly always inherit parent env *)
       List.iter (uncurry putenv) pd.environment;
@@ -52,4 +50,4 @@ let start pd =
     end
   | pid ->
     log "Forked child pid: %d" pid;
-    pid, (* [stdout_pid; stderr_pid] *) [];
+    pid, [stdout_pid; stderr_pid];

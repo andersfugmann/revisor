@@ -110,8 +110,14 @@ let check name = function
 let rec event_loop queue =
   match Queue.Exceptionless.take queue with
   | Some event ->
-    process_event event;
+    begin
+      try
+        process_event event;
+      with
+      | Not_found -> log "Hashtbl lookup failed"
+    end;
     event_loop queue
+
   | None ->
     state_tbl
     |> Hashtbl.enum
@@ -124,17 +130,25 @@ let rec event_loop queue =
     end;
     event_loop queue
 
+(** Need to implement own handling of wait_pid *)
 let rec handle_child_death queue signal =
-  match Unix.waitpid [ Unix.WNOHANG ] (-1) with
+  match Unix.waitpid [Unix.WNOHANG] (-1) with
   | 0, _ -> ()
-  | _, Unix.WSTOPPED _ -> handle_child_death queue signal
-  | pid, Unix.WEXITED _
-  | pid, Unix.WSIGNALED _ ->
-    (* log "Received term signal for pid %d: %d" pid (now ()); *)
+  | pid, Unix.WSTOPPED sig_no ->
+    log "Child stopped: %d(%d)" pid sig_no;
+    Extern.ptrace_cont pid sig_no |> ignore;
+    handle_child_death queue signal
+  | pid, Unix.WEXITED s ->
+    log "Child exited: %d(%d)" pid s;
+    Queue.add (Term pid) queue;
+    handle_child_death queue signal
+  | pid, Unix.WSIGNALED s ->
+    log "Child signaled: %d(%d)" pid s;
     Queue.add (Term pid) queue;
     handle_child_death queue signal
   | exception e ->
     log "Exception in signal handler: %s" (Printexc.to_string e)
+
 
 (*
 let check_pd = function
@@ -155,11 +169,12 @@ let _ =
   Printf.eprintf "Revisor started\n%!";
   let queue = Queue.create () in
   Sys.(set_signal Sys.sigchld (Signal_handle (handle_child_death queue)));
+  (* let _sig_thread = Thread.create handle_child_death queue in *)
 
   let now = now () in
   let open Process in
   Random.enum_int 20
-  |> Enum.take 500
+  |> Enum.take 0
   |> Enum.mapi (fun i sleep ->
       let name = Printf.sprintf "sleep:%d:%d" i (sleep + 1) in
       { name;
@@ -176,4 +191,7 @@ let _ =
         { current_state = Stopped now; target_state = Enabled}
     );
 
+  let extern_pid =  (int_of_string Sys.argv.(1)) in
+  log "one argument: %d" extern_pid;
+  Extern.ptrace_seize extern_pid |> log "Result: %d";
   event_loop queue
