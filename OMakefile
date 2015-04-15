@@ -19,7 +19,7 @@ OCAMLFLAGS = -thread -g -w @A-4-29-33-41-44-45 -bin-annot
 USE_OCAMLFIND = true
 
 OCAMLPACKS[] =
-    batteries
+    batteries ctypes.foreign ctypes.top
 
 mkdir -p _build
 vmount(-l, src, _build)
