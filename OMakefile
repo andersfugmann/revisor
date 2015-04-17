@@ -15,11 +15,11 @@ BYTE_ENABLED = true
 # Use menhir if needed.
 # Alternative is to use json for configuration.
 
-OCAMLFLAGS = -thread -g -w @A-4-29-33-41-44-45 -bin-annot
+OCAMLFLAGS = -thread -g -w @A-4-29-33-39-41-44-45-48 -bin-annot
 USE_OCAMLFIND = true
 
 OCAMLPACKS[] =
-    batteries ctypes.foreign ctypes.top
+    batteries ZMQ ppx_deriving_yojson yojson
 
 mkdir -p _build
 vmount(-l, src, _build)
@@ -32,6 +32,7 @@ vmount(-l, src, _build)
 	pipe
 	log
 	extern
+	load
 
   OCAML_CLIBS[] += extern
 

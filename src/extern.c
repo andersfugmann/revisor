@@ -1,7 +1,6 @@
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <stdio.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>

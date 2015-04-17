@@ -29,72 +29,76 @@ type event =
 
 let now () = Unix.gettimeofday () |> truncate
 (* Just process state change requests. Cannot be used to enable / disable processes *)
+
+(* Create a function for chaning state - To log ans save state changes *)
+let process_start name = function
+  | Running _ as s -> s
+  | Stopping _ as s -> s
+  | Stopped ts ->
+    (* Start the process *)
+    log "Starting process %s. In stopped state for %d seconds" name (now () - ts);
+    let pd = Hashtbl.find process_tbl name in
+    let (pid, pids) =  Process.start pd in
+    List.iter (fun p -> Hashtbl.add pid_tbl p name) (pid :: pids);
+    Running (pid, pids, now ())
+
+let process_stop name = function
+  | Running (pid, pids, ts) ->
+    log "Stopping process: %s. Running time: %d secs." name (now () - ts);
+    Unix.kill pid Sys.sigterm;
+    Stopping (Some pid, pids, now ())
+  | Stopping (None, [], ts) ->
+    log "Process %s entered stopped state after %d secs." name (now () - ts);
+    Stopped (now ())
+  | Stopping _ as s -> s
+  | Stopped _ as s -> s
+
+let process_term name s_pid = function
+  | Running (pid, pids, ts) when s_pid = pid ->
+    log "Received signal from %s (%d)" name pid;
+    log "Process was running for %d secs" (now () - ts);
+    Hashtbl.remove pid_tbl pid;
+    List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+    Stopping (None, pids, now ())
+
+  | Running (pid, pids, ts) when List.mem pid pids ->
+    log "Failure: one of the redirect processes for %s died" name;
+    log "Process was running for %d secs" (now () - ts);
+    let pids = List.filter ((<>) s_pid) pids in
+    Unix.kill pid Sys.sigterm;
+    Stopping (Some pid, pids, now ())
+
+  | Stopping (Some pid, pids, ts) when s_pid = pid ->
+    log "Process %s took %d secs to stop" name (now () - ts);
+    List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+    Stopping (None, pids, ts)
+
+  | Stopping (pid, pids, ts) when List.mem s_pid pids ->
+    let pids = List.filter ((<>) s_pid) pids in
+    log "pipe stopped for %s after %d secs" name (now () - ts);
+    Stopping (pid, pids, ts)
+
+  | _ ->
+    failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
+
+
 let process_event event =
-  let now = now () in
-  let name, new_c_state = match event with
-    | Term s_pid ->
-      begin
-        let name = Hashtbl.find pid_tbl s_pid in
-        let state = Hashtbl.find state_tbl name in
-        name, match state.current_state with
-        | Running (pid, pids, ts) when s_pid = pid ->
-          log "Received signal from %s (%d)" name pid;
-          log "Process was running for %d secs" (now - ts);
-          Hashtbl.remove pid_tbl pid;
-          List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
-          Stopping (None, pids, now)
-        | Running (pid, pids, ts) when List.mem pid pids ->
-          log "Failure: one of the redirect processes for %s died" name;
-          log "Process was running for %d secs" (now - ts);
-          let pids = List.filter ((<>) s_pid) pids in
-          Unix.kill pid Sys.sigterm;
-          Stopping (Some pid, pids, now)
-
-        | Stopping (Some pid, pids, ts) when s_pid = pid ->
-          log "Process %s took %d secs to stop" name (now - ts);
-          List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
-          Stopping (None, pids, ts)
-
-        | Stopping (pid, pids, ts) when List.mem s_pid pids ->
-          let pids = List.filter ((<>) s_pid) pids in
-          log "pipe stopped for %s after %d secs" name (now - ts);
-          Stopping (pid, pids, ts)
-
-        | _ -> failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
-      end
+  let name, new_state = match event with
     | Start name ->
-      begin
-        let state = Hashtbl.find state_tbl name in
-        name, match state.current_state with
-        | (Running _) as s -> s
-        | (Stopping _) as s -> s
-        | Stopped ts ->
-          (* Start the process *)
-          log "Starting process %s. In stopped state for %d seconds" name (now - ts);
-          let pd = Hashtbl.find process_tbl name in
-          let (pid, pids) =  Process.start pd in
-          List.iter (fun p -> Hashtbl.add pid_tbl p name) (pid :: pids);
-          Running (pid, pids, now)
-      end
+      let s = Hashtbl.find state_tbl name in
+      name, process_start name s.current_state
     | Stop name ->
-      begin
-        let state = Hashtbl.find state_tbl name in
-        name, match state.current_state with
-        | Running (pid, pids, ts) ->
-          log "Stopping process: %s. Running time: %d secs." name (now - ts);
-          Unix.kill pid Sys.sigterm;
-          Stopping (Some pid, pids, now)
-        | Stopping (None, [], ts) ->
-          log "Process %s entered stopped state after %d secs." name (now - ts);
-          Stopped now
-        | Stopping _ as s -> s
-        | Stopped _ as s -> s
-      end
+      let s = Hashtbl.find state_tbl name in
+      name, process_stop name s.current_state
+
+    | Term pid ->
+      let name = Hashtbl.find pid_tbl pid in
+      let s = Hashtbl.find state_tbl name in
+      name, process_term name pid s.current_state
   in
-  (* What is name???? *)
   let state = Hashtbl.find state_tbl name in
   Hashtbl.replace state_tbl name
-    { state with current_state = new_c_state }
+    { state with current_state = new_state }
 
 let check name = function
   | { current_state = Stopping (_, _, ts); _ } when ts + 5 < (now ()) ->
@@ -183,7 +187,8 @@ let _ =
         uid = None;
         gid = None;
         nice = None;
-        environment =  [];
+        processes = 1;
+        environment = [];
       })
   |> Enum.iter (fun pd ->
       Hashtbl.add process_tbl pd.name pd;

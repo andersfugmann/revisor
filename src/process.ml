@@ -1,15 +1,21 @@
 open Batteries
 open Log
 
-type t =
-  { name: string;
-    command: string;
-    args: string array;
-    uid: int option;
-    gid: int option;
-    nice: int option;
-    environment: (string * string) list;
-  }
+type env = {
+  key: string;
+  value: string;
+} [@@deriving yojson]
+
+type t = {
+  name: string;
+  command: string;
+  args: string array;
+  uid: int option;
+  gid: int option;
+  nice: int option;
+  processes: int [@default 1];
+  environment: env list;
+} [@@deriving yojson]
 
 let redirect ?uid ?gid ?nice filename =
   let (read_fd, write_fd) = Unix.pipe () in
@@ -18,6 +24,7 @@ let redirect ?uid ?gid ?nice filename =
     Option.may Unix.setuid uid;
     Option.may Unix.setgid gid;
     Option.may (Unix.nice %> ignore) nice;
+    (* Should do exec *)
     Pipe.run read_fd filename;
     exit 0
   | pid -> (pid, write_fd)
@@ -40,7 +47,7 @@ let start pd =
       dup2 new_stdout stdout;
 
       (* Setup the environment. Currenly always inherit parent env *)
-      List.iter (uncurry putenv) pd.environment;
+      List.iter (function {key; value} -> putenv key value) pd.environment;
       log "Started child.";
       try
         Unix.execv pd.command pd.args

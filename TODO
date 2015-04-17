@@ -1,0 +1,24 @@
+* Load configuration files on startup
+
+* Add client to send commands
+  - Reload
+  - Restart <name|all>
+  - Stop <name|all>
+  - Start <name|all>
+  - Status <name|all>
+
+  By using ipc zmq communication (test rights)
+
+* Use process groups
+
+* Change pipe to be new (one) process using execv
+
+* Add global configuration file (ini???)
+
+* Implement groups for commands
+
+* Allow template expansion in process parameters
+
+* Allow revisor restart
+  - save complete state
+  - state process state on each state change
