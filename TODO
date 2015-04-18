@@ -11,8 +11,6 @@
 
 * Use process groups
 
-* Change pipe to be new (one) process using execv
-
 * Add global configuration file (ini???)
 
 * Implement groups for commands
@@ -25,3 +23,7 @@
 
 * Send internal state changes to graphite, as well as process name
   state changes - Use zmq to connect to graphite
+
+* Restart limit - Do no restart too often.
+  Could be implemented as as times per minute
+  (* Actually - its initial capacity, max capacity and charge *)
