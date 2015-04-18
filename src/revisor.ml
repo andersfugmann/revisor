@@ -129,7 +129,9 @@ let rec event_loop queue =
     |> Enum.iter (fun e -> Queue.push e queue);
     begin
       match Queue.is_empty queue with
-      | true -> Unix.sleep 1;
+      | true ->
+        log "*** Sleep";
+        Unix.sleep 1
       | false -> ()
     end;
     event_loop queue
@@ -178,7 +180,7 @@ let _ =
   let now = now () in
   let open Process in
   Random.enum_int 20
-  |> Enum.take 0
+  |> Enum.take 50
   |> Enum.mapi (fun i sleep ->
       let name = Printf.sprintf "sleep:%d:%d" i (sleep + 1) in
       { name;
@@ -195,8 +197,9 @@ let _ =
       Hashtbl.add state_tbl pd.name
         { current_state = Stopped now; target_state = Enabled}
     );
-
+(*
   let extern_pid =  (int_of_string Sys.argv.(1)) in
   log "one argument: %d" extern_pid;
   Extern.ptrace_seize extern_pid |> log "Result: %d";
+*)
   event_loop queue
