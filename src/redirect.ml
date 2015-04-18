@@ -36,3 +36,8 @@ let run in_fd filename =
     end;
     write !fd line
   done
+
+let () =
+  let fd = Sys.argv.(1) |> int_of_string |> ExtUnixAll.file_descr_of_int in
+  let filename = Sys.argv.(2) in
+  run fd filename

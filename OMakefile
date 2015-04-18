@@ -19,7 +19,7 @@ OCAMLFLAGS = -thread -g -w @A-4-29-33-39-41-44-45-48 -bin-annot
 USE_OCAMLFIND = true
 
 OCAMLPACKS[] =
-    batteries ZMQ ppx_deriving_yojson yojson
+    batteries ZMQ ppx_deriving_yojson yojson extunix
 
 mkdir -p _build
 vmount(-l, src, _build)
@@ -29,7 +29,6 @@ vmount(-l, src, _build)
 
   FILES[] =
 	process
-	pipe
 	log
 	extern
 	load
@@ -43,3 +42,9 @@ vmount(-l, src, _build)
   section:
       PROGRAM = revisorctl
       .DEFAULT: $(OCamlProgram $(PROGRAM), client_commands $(PROGRAM))
+
+  section:
+      OCAMLPACKS[] = batteries extunix
+
+      PROGRAM = redirect
+      .DEFAULT: $(OCamlProgram $(PROGRAM), $(PROGRAM))

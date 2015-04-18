@@ -131,6 +131,9 @@ let rec event_loop queue =
       match Queue.is_empty queue with
       | true ->
         log "*** Sleep";
+        (* Instead of sleeping, wait for a command message.
+           We assume that signals from childs will interrupt the ZMQ recv.
+           This means that we are 100% reactive *)
         Unix.sleep 1
       | false -> ()
     end;
@@ -180,7 +183,7 @@ let _ =
   let now = now () in
   let open Process in
   Random.enum_int 20
-  |> Enum.take 50
+  |> Enum.take 100
   |> Enum.mapi (fun i sleep ->
       let name = Printf.sprintf "sleep:%d:%d" i (sleep + 1) in
       { name;

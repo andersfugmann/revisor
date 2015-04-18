@@ -17,25 +17,30 @@ type t = {
   environment: env list;
 } [@@deriving yojson]
 
-let redirect ?uid ?gid ?nice filename =
+let redirect name ?uid ?gid ?nice filename =
   let (read_fd, write_fd) = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
     Option.may Unix.setuid uid;
     Option.may Unix.setgid gid;
     Option.may (Unix.nice %> ignore) nice;
+
     (* Should do exec *)
-    Pipe.run read_fd filename;
-    exit 0
-  | pid -> (pid, write_fd)
+    let read_fd_str =
+      read_fd |> ExtUnixAll.int_of_file_descr |> string_of_int
+    in
+    Unix.execv "_build/redirect" [|name; read_fd_str; filename|]
+  | pid ->
+    Unix.close read_fd;
+    (pid, write_fd)
 
 let start pd =
   let open Unix in
   let (stdout_pid, new_stdout) =
-    redirect ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.log" pd.name)
+    redirect (pd.name ^ ":stdout") ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.log" pd.name)
   in
   let (stderr_pid, new_stderr) =
-    redirect ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.err" pd.name)
+    redirect (pd.name ^ ":stderr") ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.err" pd.name)
   in
   match Unix.fork () with
   | 0 ->
@@ -56,5 +61,10 @@ let start pd =
         failwith "exec failed"
     end
   | pid ->
+    (* Close the fd's? Dont we use them now? *)
+
+    Unix.close new_stdout;
+    Unix.close new_stderr;
+
     log "Forked child pid: %d" pid;
     pid, [stdout_pid; stderr_pid];
