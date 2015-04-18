@@ -39,3 +39,7 @@ vmount(-l, src, _build)
   section:
       PROGRAM = revisor
       .DEFAULT: $(OCamlProgram $(PROGRAM), $(FILES) $(PROGRAM))
+
+  section:
+      PROGRAM = revisorctl
+      .DEFAULT: $(OCamlProgram $(PROGRAM), client_commands $(PROGRAM))

@@ -22,3 +22,6 @@
 * Allow revisor restart
   - save complete state
   - state process state on each state change
+
+* Send internal state changes to graphite, as well as process name
+  state changes - Use zmq to connect to graphite
