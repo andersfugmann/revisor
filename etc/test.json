@@ -1,0 +1,10 @@
+{
+  "name": "test",
+  "command": "_build/test",
+  "args": [ "0", "5000" ],
+  "uid": null,
+  "gid": null,
+  "nice": null,
+  "environment": [],
+  "processes": 100
+}
