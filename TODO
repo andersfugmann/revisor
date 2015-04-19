@@ -7,7 +7,7 @@
 
   By using ipc zmq communication (test rights)
 
-* Use process groups
+* Use session-id's to validate process 'ownership'
 
 * Add global configuration file (ini???)
 
@@ -25,3 +25,6 @@
 * Restart limit - Do no restart too often.
   Could be implemented as as times per minute
   (* Actually - its initial capacity, max capacity and charge *)
+
+* Handle daemonizing processes
+  - Daemoninzing process must state its pid file and we trace the pid after n secs.

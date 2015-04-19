@@ -115,9 +115,14 @@ let rec event_loop queue =
     event_loop queue
 
   | None ->
-    Hashtbl.keys target_tbl
-    |> Enum.filter_map check
-    |> Enum.iter (fun e -> Queue.push e queue);
+    Enum.append
+      (Hashtbl.keys target_tbl)
+      (State.keys state_tbl)
+    |> List.of_enum
+    |> List.sort_unique compare
+    |> List.filter_map check
+    |> List.iter (fun e -> Queue.push e queue);
+
     begin
       match Queue.is_empty queue with
       | true ->

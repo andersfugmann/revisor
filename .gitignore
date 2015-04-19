@@ -10,3 +10,4 @@ revisor
 _build
 log/*.log
 log/*.err
+run/*.state
