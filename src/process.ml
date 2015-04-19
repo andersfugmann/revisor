@@ -67,5 +67,5 @@ let start pd =
     Unix.close new_stdout;
     Unix.close new_stderr;
 
-    log "Forked child pid: %d" pid;
+    (* log "Forked child pid: %d" pid; *)
     pid, [stdout_pid; stderr_pid];

@@ -12,7 +12,7 @@ let expand = function
   | { Process.processes; name; _} as p when processes > 1 ->
     List.init processes
       (fun n -> { p with Process.processes = 1;
-                         name = Printf.sprintf "%s:%d" name (n-1)
+                         name = Printf.sprintf "%s:%d" name n
                 }
       )
   | { Process.processes; name; _} -> failwith (Printf.sprintf "%s: illegal number of processes (%d)" name processes)

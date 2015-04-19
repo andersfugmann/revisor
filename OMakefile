@@ -32,6 +32,7 @@ vmount(-l, src, _build)
 	log
 	extern
 	load
+	state
 
   OCAML_CLIBS[] += extern
 
