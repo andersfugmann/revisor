@@ -9,7 +9,7 @@ type env = {
 type t = {
   name: string;
   command: string;
-  args: string array;
+  args: string list;
   uid: int option;
   gid: int option;
   nice: int option;
@@ -55,9 +55,10 @@ let start pd =
       List.iter (function {key; value} -> putenv key value) pd.environment;
       log "Started child.";
       try
-        Unix.execv pd.command pd.args
+        Unix.execv pd.command (Array.of_list (pd.name :: pd.args))
       with
       | e -> log "execv failed: %s" (Printexc.to_string e);
+        (* Should log perror *)
         failwith "exec failed"
     end
   | pid ->

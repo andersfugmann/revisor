@@ -27,7 +27,7 @@ type event =
   | Start of string
   | Stop of string
 
-let now () = Unix.gettimeofday () |> truncate
+let now () = Unix.gettimeofday () *. 1000.0 |> truncate
 (* Just process state change requests. Cannot be used to enable / disable processes *)
 
 (* Create a function for chaning state - To log ans save state changes *)
@@ -36,7 +36,7 @@ let process_start name = function
   | Stopping _ as s -> s
   | Stopped ts ->
     (* Start the process *)
-    log "Starting process %s. In stopped state for %d seconds" name (now () - ts);
+    log "Starting process %s. In stopped state for %d msecs" name (now () - ts);
     let pd = Hashtbl.find process_tbl name in
     let (pid, pids) =  Process.start pd in
     List.iter (fun p -> Hashtbl.add pid_tbl p name) (pid :: pids);
@@ -44,11 +44,11 @@ let process_start name = function
 
 let process_stop name = function
   | Running (pid, pids, ts) ->
-    log "Stopping process: %s. Running time: %d secs." name (now () - ts);
+    log "Stopping process: %s. Running time: %d msecs." name (now () - ts);
     Unix.kill pid Sys.sigterm;
     Stopping (Some pid, pids, now ())
   | Stopping (None, [], ts) ->
-    log "Process %s entered stopped state after %d secs." name (now () - ts);
+    log "Process %s entered stopped state after %d msecs." name (now () - ts);
     Stopped (now ())
   | Stopping _ as s -> s
   | Stopped _ as s -> s
@@ -56,26 +56,26 @@ let process_stop name = function
 let process_term name s_pid = function
   | Running (pid, pids, ts) when s_pid = pid ->
     log "Received signal from %s (%d)" name pid;
-    log "Process was running for %d secs" (now () - ts);
+    log "Process was running for %d msecs" (now () - ts);
     Hashtbl.remove pid_tbl pid;
     List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
     Stopping (None, pids, now ())
 
   | Running (pid, pids, ts) when List.mem pid pids ->
     log "Failure: one of the redirect processes for %s died" name;
-    log "Process was running for %d secs" (now () - ts);
+    log "Process was running for %d msecs" (now () - ts);
     let pids = List.filter ((<>) s_pid) pids in
     Unix.kill pid Sys.sigterm;
     Stopping (Some pid, pids, now ())
 
   | Stopping (Some pid, pids, ts) when s_pid = pid ->
-    log "Process %s took %d secs to stop" name (now () - ts);
+    log "Process %s took %d msecs to stop" name (now () - ts);
     List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
     Stopping (None, pids, ts)
 
   | Stopping (pid, pids, ts) when List.mem s_pid pids ->
     let pids = List.filter ((<>) s_pid) pids in
-    log "pipe stopped for %s after %d secs" name (now () - ts);
+    (* log "pipe stopped for %s after %d msecs" name (now () - ts); *)
     Stopping (pid, pids, ts)
 
   | _ ->
@@ -130,7 +130,6 @@ let rec event_loop queue =
     begin
       match Queue.is_empty queue with
       | true ->
-        log "*** Sleep";
         (* Instead of sleeping, wait for a command message.
            We assume that signals from childs will interrupt the ZMQ recv.
            This means that we are 100% reactive *)
@@ -144,17 +143,18 @@ let rec handle_child_death queue signal =
   match Unix.waitpid [Unix.WNOHANG] (-1) with
   | 0, _ -> ()
   | pid, Unix.WSTOPPED sig_no ->
-    log "Child stopped: %d(%d)" pid sig_no;
+    (* log "Child stopped: %d(%d)" pid sig_no; *)
     Extern.ptrace_cont pid sig_no |> ignore;
     handle_child_death queue signal
-  | pid, Unix.WEXITED s ->
-    log "Child exited: %d(%d)" pid s;
+  | pid, Unix.WEXITED _s ->
+    (* log "Child exited: %d(%d)" pid s; *)
     Queue.add (Term pid) queue;
     handle_child_death queue signal
-  | pid, Unix.WSIGNALED s ->
-    log "Child signaled: %d(%d)" pid s;
+  | pid, Unix.WSIGNALED _s ->
+    (* log "Child signaled: %d(%d)" pid s; *)
     Queue.add (Term pid) queue;
     handle_child_death queue signal
+  | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) -> ()
   | exception e ->
     log "Exception in signal handler: %s" (Printexc.to_string e)
 
@@ -181,28 +181,16 @@ let _ =
   (* let _sig_thread = Thread.create handle_child_death queue in *)
 
   let now = now () in
-  let open Process in
-  Random.enum_int 20
-  |> Enum.take 100
-  |> Enum.mapi (fun i sleep ->
-      let name = Printf.sprintf "sleep:%d:%d" i (sleep + 1) in
-      { name;
-        command = "/bin/sleep";
-        args = [| name; string_of_int (sleep + 1) |];
-        uid = None;
-        gid = None;
-        nice = None;
-        processes = 1;
-        environment = [];
-      })
-  |> Enum.iter (fun pd ->
+  Load.load "etc"
+  |> List.iter (fun pd ->
+      let open Process in
+      pd |> Process.to_yojson |> Yojson.Safe.pretty_to_string |> print_endline;
+
+
       Hashtbl.add process_tbl pd.name pd;
       Hashtbl.add state_tbl pd.name
         { current_state = Stopped now; target_state = Enabled}
     );
-(*
-  let extern_pid =  (int_of_string Sys.argv.(1)) in
-  log "one argument: %d" extern_pid;
-  Extern.ptrace_seize extern_pid |> log "Result: %d";
-*)
+
+
   event_loop queue

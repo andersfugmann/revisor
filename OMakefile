@@ -45,6 +45,10 @@ vmount(-l, src, _build)
 
   section:
       OCAMLPACKS[] = batteries extunix
-
       PROGRAM = redirect
+      .DEFAULT: $(OCamlProgram $(PROGRAM), $(PROGRAM))
+
+  section:
+      OCAMLPACKS[] = batteries
+      PROGRAM = test
       .DEFAULT: $(OCamlProgram $(PROGRAM), $(PROGRAM))

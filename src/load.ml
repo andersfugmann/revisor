@@ -19,6 +19,7 @@ let expand = function
 
 let load_file f =
   f
+  |> tap print_endline
   |> Yojson.Safe.from_file
   |> Process.of_yojson
   |> function `Ok v -> v
@@ -28,6 +29,7 @@ let load dir =
   Sys.readdir dir
   |> Array.to_list
   |> List.filter (fun f -> Filename.check_suffix f suffix)
+  |> List.map (fun l -> dir ^ "/" ^ l)
   |> List.map load_file
   |> List.map expand
   |> List.flatten
