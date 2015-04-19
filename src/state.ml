@@ -46,7 +46,9 @@ let update_state t name new_state =
     | None -> { ts = now; state = Stopped }
   in
   let state = { state with state = new_state } in
-  Hashtbl.replace t name state
+  match new_state with
+  | Stopped -> Hashtbl.remove t name;
+  | _ -> Hashtbl.replace t name state
 
 let state t name =
   (** Assume non existent names to be stopped *)

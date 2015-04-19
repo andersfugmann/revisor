@@ -1,5 +1,3 @@
-* Load configuration files on startup
-
 * Add client to send commands
   - Reload
   - Restart <name|all>
@@ -13,7 +11,7 @@
 
 * Add global configuration file (ini???)
 
-* Implement groups for commands
+* Implement process groups to allow restart all processes in a group at a time
 
 * Allow template expansion in process parameters
 
