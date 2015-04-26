@@ -17,6 +17,26 @@ type t = {
   environment: env list;
 } [@@deriving yojson]
 
+(* Can be block signal delivery while starting processes??? *)
+let start_time =
+  (* Read field 22 (%llu) *)
+  let re = Str.regexp "[0-9]+ ([^)]*) . \\(\\([-]?[0-9]+ \\)*\\)" in
+  fun pid ->
+    let s =
+      Printf.sprintf "/proc/%d/stat" pid
+      |> File.lines_of
+      |> Enum.get_exn
+    in
+    match Str.string_match re s 0 with
+    | false ->
+      failwith "Cannot decode stat for process pid"
+    | true ->
+      Str.matched_group 1 s
+      |> String.nsplit ~by:" "
+      |> (flip List.nth) 18
+      |> int_of_string
+
+
 let redirect name ?uid ?gid ?nice filename =
   let (read_fd, write_fd) = Unix.pipe () in
   match Unix.fork () with
@@ -31,8 +51,9 @@ let redirect name ?uid ?gid ?nice filename =
     in
     Unix.execv "_build/redirect" [|name; read_fd_str; filename|]
   | pid ->
+    let start_time = start_time pid in
     Unix.close read_fd;
-    (pid, write_fd)
+    ((pid, start_time), write_fd)
 
 let start pd =
   let open Unix in
@@ -62,10 +83,8 @@ let start pd =
         failwith "exec failed"
     end
   | pid ->
-    (* Close the fd's? Dont we use them now? *)
-
     Unix.close new_stdout;
     Unix.close new_stderr;
-
+    let start_time = start_time pid in
     (* log "Forked child pid: %d" pid; *)
-    pid, [stdout_pid; stderr_pid];
+    (pid, start_time), [stdout_pid; stderr_pid];

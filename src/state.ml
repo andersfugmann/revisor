@@ -1,8 +1,9 @@
 open Batteries
 
 (* The target state could hold information about restarts etc. *)
-type pid = int [@@deriving yojson]
 type ts = int [@@deriving yojson]
+type pid_t = int [@@deriving yojson]
+type pid = pid_t * ts [@@deriving yojson]
 
 type current_state = Running of pid * pid list
                    | Stopping of pid option * pid list * ts
@@ -17,9 +18,15 @@ let suffix = ".state"
 
 let now () = Unix.gettimeofday () *. 1000.0 |> truncate
 
-(** Really not a good validation *)
-let validate_state s =
-  { s with state = Stopped }
+let is_running (pid, start_time) =
+  match Process.start_time pid with
+  | start_time' -> start_time' = start_time
+  | exception _ ->
+    (* File not there, no access et. al *)
+    false
+
+let validate_state state =
+  { state with state = Stopped }
 
 let load filename =
   let state =
@@ -47,8 +54,7 @@ let init () =
   |> List.filter (fun f -> Filename.check_suffix f suffix)
   |> List.map (fun l -> run_dir ^ "/" ^ l)
   |> List.map load
-  |> List.map (Tuple.Tuple2.map2 validate_state)
-  |> List.filter (function (_, { state; _ }) -> state <> Stopped)
+  |> List.map  (Tuple.Tuple2.map2 validate_state)
   |> List.enum
   |> Hashtbl.of_enum
 

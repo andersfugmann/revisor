@@ -7,11 +7,12 @@
 
   By using ipc zmq communication (test rights)
 
-* Use session-id's to validate process 'ownership'
+* Save pid and process start time
 
 * Add global configuration file (ini???)
 
-* Implement process groups to allow restart all processes in a group at a time
+* Implement process groups (configuration) to allow restart all
+  processes in a group at a time
 
 * Allow template expansion in process parameters
 
@@ -20,11 +21,11 @@
   - state process state on each state change
 
 * Send internal state changes to graphite, as well as process name
-  state changes - Use zmq to connect to graphite
+  state changes - Use zmq to send data to graphite
 
 * Restart limit - Do no restart too often.
   Could be implemented as as times per minute
   (* Actually - its initial capacity, max capacity and charge *)
 
 * Handle daemonizing processes
-  - Daemoninzing process must state its pid file and we trace the pid after n secs.
+  - Daemoninzing process must state its pid file and we trace the pid after n secs ( - possibly trace all forks / vforks and clones, and exit when all processes       have stopped )

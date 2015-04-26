@@ -5,7 +5,7 @@ open State
 (* Everything is keys on pd.name. That is unique *)
 
 type event =
-  | Term of pid
+  | Term of pid_t
   | Start of string
   | Stop of string
 
@@ -21,6 +21,26 @@ let target_tbl = Hashtbl.create 0
 let now () = Unix.gettimeofday () *. 1000.0 |> truncate
 (* Just process state change requests. Cannot be used to enable / disable processes *)
 
+let rec reap_children queue =
+  match Unix.waitpid [Unix.WNOHANG] (-1) with
+  | 0, _ -> ()
+  | pid, Unix.WSTOPPED sig_no ->
+    (* log "Child stopped: %d(%d)" pid sig_no; *)
+    Extern.ptrace_cont pid sig_no |> ignore;
+    reap_children queue
+  | pid, Unix.WEXITED _s ->
+    (* log "Child exited: %d(%d)" pid s; *)
+    Queue.add (Term pid) queue;
+    reap_children queue
+  | pid, Unix.WSIGNALED _s ->
+    (* log "Child signaled: %d(%d)" pid s; *)
+    Queue.add (Term pid) queue;
+    reap_children queue
+  | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) -> ()
+  | exception e ->
+    log "Exception in signal handler: %s" (Printexc.to_string e)
+
+
 (* Create a function for chaning state - To log and save state changes *)
 let process_start name = function
   | Running _ as s -> s
@@ -29,12 +49,12 @@ let process_start name = function
     (* Start the process *)
     let pd = Hashtbl.find process_tbl name in
     let (pid, pids) =  Process.start pd in
-    List.iter (fun p -> Hashtbl.add pid_tbl p name) (pid :: pids);
+    List.iter (fun (p, _) -> Hashtbl.add pid_tbl p name) (pid :: pids);
     Running (pid, pids)
 
 let process_stop = function
   | State.Running (pid, pids) ->
-    Unix.kill pid Sys.sigterm;
+    Unix.kill (fst pid) Sys.sigterm;
     Stopping (Some pid, pids, now ())
   | Stopping (None, [], _) ->
     Stopped
@@ -42,24 +62,24 @@ let process_stop = function
   | Stopped as s -> s
 
 let process_term name s_pid = function
-  | Running (pid, pids) when s_pid = pid ->
+  | Running (pid, pids) when s_pid = fst pid ->
     (* log "Received signal from %s (%d)" name pid; *)
-    Hashtbl.remove pid_tbl pid;
-    List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+    Hashtbl.remove pid_tbl (fst pid);
+    List.iter (fun pid -> Unix.kill (fst pid) Sys.sigterm) pids;
     Stopping (None, pids, now ())
 
-  | Running (pid, pids) when List.mem pid pids ->
+  | Running (pid, pids) when List.exists (fun (p, _) -> p = s_pid) pids ->
     (* log "Failure: one of the redirect processes for %s died" name; *)
-    let pids = List.filter ((<>) s_pid) pids in
-    Unix.kill pid Sys.sigterm;
+    let pids = List.filter (fun (p, _) -> p <> s_pid) pids in
+    Unix.kill (fst pid) Sys.sigterm;
     Stopping (Some pid, pids, now ())
 
-  | Stopping (Some pid, pids, ts) when s_pid = pid ->
-    List.iter (fun pid -> Unix.kill pid Sys.sigterm) pids;
+  | Stopping (Some pid, pids, ts) when s_pid = fst pid ->
+    List.iter (fun pid -> Unix.kill (fst pid) Sys.sigterm) pids;
     Stopping (None, pids, ts)
 
-  | Stopping (pid, pids, ts) when List.mem s_pid pids ->
-    let pids = List.filter ((<>) s_pid) pids in
+  | Stopping (pid, pids, ts) when List.exists (fun (p, _) -> p = s_pid) pids ->
+    let pids = List.filter (fun (p, _) -> p <> s_pid) pids in
     Stopping (pid, pids, ts)
   | _ ->
     failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
@@ -115,6 +135,7 @@ let rec event_loop queue =
     event_loop queue
 
   | None ->
+    (* See if any state changes are needed *)
     Enum.append
       (Hashtbl.keys target_tbl)
       (State.keys state_tbl)
@@ -122,6 +143,8 @@ let rec event_loop queue =
     |> List.sort_unique compare
     |> List.filter_map check
     |> List.iter (fun e -> Queue.push e queue);
+
+    reap_children queue;
 
     begin
       match Queue.is_empty queue with
@@ -135,29 +158,15 @@ let rec event_loop queue =
     event_loop queue
 
 (** Need to implement own handling of wait_pid *)
-let rec handle_child_death queue signal =
-  match Unix.waitpid [Unix.WNOHANG] (-1) with
-  | 0, _ -> ()
-  | pid, Unix.WSTOPPED sig_no ->
-    (* log "Child stopped: %d(%d)" pid sig_no; *)
-    Extern.ptrace_cont pid sig_no |> ignore;
-    handle_child_death queue signal
-  | pid, Unix.WEXITED _s ->
-    (* log "Child exited: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue;
-    handle_child_death queue signal
-  | pid, Unix.WSIGNALED _s ->
-    (* log "Child signaled: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue;
-    handle_child_death queue signal
-  | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) -> ()
-  | exception e ->
-    log "Exception in signal handler: %s" (Printexc.to_string e)
+let rec handle_child_death _signal =
+  (* We really dont need to do anything, as the main loop will
+     reap dead children *)
+  ()
 
 let _ =
   Printf.eprintf "Revisor started\n%!";
   let queue = Queue.create () in
-  Sys.(set_signal Sys.sigchld (Signal_handle (handle_child_death queue)));
+  Sys.(set_signal Sys.sigchld (Signal_handle handle_child_death));
   (* let _sig_thread = Thread.create handle_child_death queue in *)
 
   Load.load "etc"
