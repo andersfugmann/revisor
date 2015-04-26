@@ -48,39 +48,39 @@ let process_start name = function
   | Stopped  ->
     (* Start the process *)
     let pd = Hashtbl.find process_tbl name in
-    let (pid, pids) =  Process.start pd in
-    List.iter (fun (p, _) -> Hashtbl.add pid_tbl p name) (pid :: pids);
-    Running (pid, pids)
+    let (pid, r_pid) =  Process.start pd in
+    List.iter (fun (p, _) -> Hashtbl.add pid_tbl p name) [pid; r_pid];
+    Running (pid, r_pid)
 
 let process_stop = function
-  | State.Running (pid, pids) ->
+  | State.Running (pid, r_pid) ->
     Unix.kill (fst pid) Sys.sigterm;
-    Stopping (Some pid, pids, now ())
-  | Stopping (None, [], _) ->
+    Stopping (Some pid, Some r_pid, now ())
+  | Stopping (None, None, _) ->
     Stopped
   | Stopping _ as s -> s
   | Stopped as s -> s
 
 let process_term name s_pid = function
-  | Running (pid, pids) when s_pid = fst pid ->
+  | Running (pid, r_pid) when s_pid = fst pid ->
     (* log "Received signal from %s (%d)" name pid; *)
     Hashtbl.remove pid_tbl (fst pid);
-    List.iter (fun pid -> Unix.kill (fst pid) Sys.sigterm) pids;
-    Stopping (None, pids, now ())
+    Unix.kill (fst r_pid) Sys.sigterm;
+    Stopping (None, Some r_pid, now ())
 
-  | Running (pid, pids) when List.exists (fun (p, _) -> p = s_pid) pids ->
+  | Running (pid, r_pid) when s_pid = fst r_pid ->
     (* log "Failure: one of the redirect processes for %s died" name; *)
-    let pids = List.filter (fun (p, _) -> p <> s_pid) pids in
     Unix.kill (fst pid) Sys.sigterm;
-    Stopping (Some pid, pids, now ())
+    Stopping (Some pid, None, now ())
 
-  | Stopping (Some pid, pids, ts) when s_pid = fst pid ->
-    List.iter (fun pid -> Unix.kill (fst pid) Sys.sigterm) pids;
-    Stopping (None, pids, ts)
+  | Stopping (Some pid, r_pid, ts) when s_pid = fst pid ->
+    Option.may (fun pid -> Unix.kill (fst pid) Sys.sigterm) r_pid;
+    Stopping (None, r_pid, ts)
 
-  | Stopping (pid, pids, ts) when List.exists (fun (p, _) -> p = s_pid) pids ->
-    let pids = List.filter (fun (p, _) -> p <> s_pid) pids in
-    Stopping (pid, pids, ts)
+  | Stopping (pid, Some r_pid, ts) when s_pid = fst r_pid ->
+    Option.may (fun pid -> Unix.kill (fst pid) Sys.sigterm) pid;
+    Stopping (pid, None, ts)
+
   | _ ->
     failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
 
@@ -118,7 +118,7 @@ let check name =
   match state, target with
   | Stopping (_, _, ts), _ when ts + 5 < (now ()) ->
     Some (Stop name)
-  | Stopping (None, [], _), _ ->
+  | Stopping (None, None, _), _ ->
     Some (Stop name)
   | Running _, Disabled ->
     Some (Stop name)

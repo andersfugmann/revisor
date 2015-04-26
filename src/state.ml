@@ -5,8 +5,8 @@ type ts = int [@@deriving yojson]
 type pid_t = int [@@deriving yojson]
 type pid = pid_t * ts [@@deriving yojson]
 
-type current_state = Running of pid * pid list
-                   | Stopping of pid option * pid list * ts
+type current_state = Running of pid * pid
+                   | Stopping of pid option * pid option * ts
                    | Stopped [@@deriving yojson]
 type state = {
   ts: int; (* Time in the state (ms) *)

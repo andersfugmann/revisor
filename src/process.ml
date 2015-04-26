@@ -37,8 +37,9 @@ let start_time =
       |> int_of_string
 
 
-let redirect name ?uid ?gid ?nice filename =
-  let (read_fd, write_fd) = Unix.pipe () in
+let redirect name ?uid ?gid ?nice fn1 fn2 =
+  let (read_fd1, write_fd1) = Unix.pipe () in
+  let (read_fd2, write_fd2) = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
     Option.may Unix.setuid uid;
@@ -46,22 +47,25 @@ let redirect name ?uid ?gid ?nice filename =
     Option.may (Unix.nice %> ignore) nice;
 
     (* Should do exec *)
-    let read_fd_str =
-      read_fd |> ExtUnixAll.int_of_file_descr |> string_of_int
+    let read_fd_str1 =
+      read_fd1 |> ExtUnixAll.int_of_file_descr |> string_of_int
     in
-    Unix.execv "_build/redirect" [|name; read_fd_str; filename|]
+    let read_fd_str2 =
+      read_fd2 |> ExtUnixAll.int_of_file_descr |> string_of_int
+    in
+    Unix.execv "_build/redirect" [|name; read_fd_str1; fn1; read_fd_str2; fn2|]
   | pid ->
-    let start_time = start_time pid in
-    Unix.close read_fd;
-    ((pid, start_time), write_fd)
+    Unix.close read_fd1;
+    Unix.close read_fd2;
+    (pid, write_fd1, write_fd2)
 
 let start pd =
   let open Unix in
-  let (stdout_pid, new_stdout) =
-    redirect (pd.name ^ ":stdout") ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.log" pd.name)
-  in
-  let (stderr_pid, new_stderr) =
-    redirect (pd.name ^ ":stderr") ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice (Printf.sprintf "log/%s.err" pd.name)
+  let (redirect_pid, new_stdout, new_stderr) =
+    redirect (pd.name ^ ":redirect") ?uid:pd.uid ?gid:pd.gid ?nice:pd.nice
+      (Printf.sprintf "log/%s.log" pd.name)
+      (Printf.sprintf "log/%s.err" pd.name)
+
   in
   match Unix.fork () with
   | 0 ->
@@ -85,6 +89,7 @@ let start pd =
   | pid ->
     Unix.close new_stdout;
     Unix.close new_stderr;
-    let start_time = start_time pid in
+    let p_start_time = start_time pid in
+    let r_start_time = start_time redirect_pid in
     (* log "Forked child pid: %d" pid; *)
-    (pid, start_time), [stdout_pid; stderr_pid];
+    ((pid, p_start_time), (redirect_pid, r_start_time));
