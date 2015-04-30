@@ -42,6 +42,7 @@ let redirect name ?uid ?gid ?nice fn1 fn2 =
   let (read_fd2, write_fd2) = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
+    Unix.setsid () |> ignore;
     Option.may Unix.setuid uid;
     Option.may Unix.setgid gid;
     Option.may (Unix.nice %> ignore) nice;
@@ -70,6 +71,7 @@ let start pd =
   match Unix.fork () with
   | 0 ->
     begin
+      Unix.setsid () |> ignore;
       Option.may setuid pd.uid;
       Option.may setgid pd.gid;
       Option.may (nice %> ignore) pd.nice;

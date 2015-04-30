@@ -13,10 +13,9 @@ type target_state = Enabled
                   | Disabled
 
 let process_tbl = Hashtbl.create 0 (* name -> process decription *)
-let state_tbl = State.init ()
+let state_tbl = Hashtbl.create 0
 let pid_tbl = Hashtbl.create 0 (* pid -> name *)
 let target_tbl = Hashtbl.create 0
-
 
 let now () = Unix.gettimeofday () *. 1000.0 |> truncate
 (* Just process state change requests. Cannot be used to enable / disable processes *)
@@ -163,11 +162,18 @@ let rec handle_child_death _signal =
      reap dead children *)
   ()
 
+(** Reload old state *)
+let update_state (name, state) =
+  log "Reattach process: %s" name;
+  let pids = State.pids_of_state state.State.state in
+  List.iter (Extern.ptrace_seize %> ignore) pids;
+  List.iter (fun p -> Hashtbl.add pid_tbl p name) pids;
+  Hashtbl.add state_tbl name state
+
 let _ =
   Printf.eprintf "Revisor started\n%!";
   let queue = Queue.create () in
   Sys.(set_signal Sys.sigchld (Signal_handle handle_child_death));
-  (* let _sig_thread = Thread.create handle_child_death queue in *)
 
   Load.load "etc"
   |> List.iter (fun pd ->
@@ -177,5 +183,7 @@ let _ =
       Hashtbl.add process_tbl pd.name pd;
       Hashtbl.add target_tbl pd.name Enabled
     );
+
+  List.iter update_state (State.init ());
 
   event_loop queue
