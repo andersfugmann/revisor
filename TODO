@@ -7,18 +7,14 @@
 
   By using ipc zmq communication (test rights)
 
-* Save pid and process start time
+* Process groups to restart all processes in a group
+
+* Process dependancies - Start processes in order
+  Q: When is a process fully started?
 
 * Add global configuration file (ini???)
 
-* Implement process groups (configuration) to allow restart all
-  processes in a group at a time
-
 * Allow template expansion in process parameters
-
-* Allow revisor restart
-  - save complete state
-  - state process state on each state change
 
 * Send internal state changes to graphite, as well as process name
   state changes - Use zmq to send data to graphite
@@ -29,3 +25,5 @@
 
 * Handle daemonizing processes
   - Daemoninzing process must state its pid file and we trace the pid after n secs ( - possibly trace all forks / vforks and clones, and exit when all processes       have stopped )
+
+* Save start/stop process target state, and reload previous state when restarting.
