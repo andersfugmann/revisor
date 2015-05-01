@@ -1,94 +1,102 @@
 open Batteries
 
+(**
+   This file really needs a rewrite.
+   It would read all bytes from its file descrs, and
+   write byte for byte.
+
+   A global state indicates if a newline has just been encounterd
+*)
+type t = {
+  fd_in: Unix.file_descr;
+  filename: string;
+  mutable fd_out: Unix.file_descr;
+  mutable new_line: bool;
+}
+
 let open_file filename =
   Unix.(openfile filename [O_WRONLY; O_APPEND; O_CREAT] 0o644)
 
-
 (* We cannot write a complete line. *)
-let rec write_ch bol ch =
+let rec write_char t ch =
   let open Unix in
-  let str = match bol with
+  let str = match t.new_line with
     | true ->
       let now = gettimeofday () in
       let ts = localtime now in
       let millis = (Pervasives.truncate (now *. 1000.0)) mod 1000 in
       Printf.sprintf "[%04d-%02d-%02d %02d:%02d:%02d.%03d] %c"
-        (ts.tm_year+1900) (ts.tm_mon+1) ts.tm_mday ts.tm_hour ts.tm_min ts.tm_sec millis ch
+        (ts.tm_year+1900) (ts.tm_mon+1)
+        ts.tm_mday ts.tm_hour ts.tm_min ts.tm_sec millis
+        ch
     | false ->
       String.of_char ch
   in
-  let bol = ch = '\n' in
-  (str, bol)
+  t.new_line <- ch = '\n';
+  str
 
-let write_bytes (fd, bol) bytes =
+let write_bytes t bytes =
   let buffer = Buffer.create (Bytes.length bytes + 27) in
 
-  let (buffer, bol) =
-    String.fold_left
-      (fun (acc, state) ch ->
-         let (s, state) = write_ch state ch in
-         Buffer.add_string acc s; (acc, state))
-      (buffer, bol) (Bytes.to_string bytes)
-  in
-  (* Ok. Lets actually write it *)
-  Unix.write fd (Buffer.to_bytes buffer) 0 (Buffer.length buffer) |> ignore;
-  (fd, bol)
+  Bytes.iter (fun ch -> Buffer.add_string buffer (write_char t ch)) bytes;
+  Unix.write t.fd_out (Buffer.to_bytes buffer) 0 (Buffer.length buffer) |> ignore
 
-let rec read in_fd out =
-  let buffer = Bytes.create 256 in
-  match Unix.read in_fd buffer 0 256 with
+
+let read_size = 256
+let rec read t =
+  let buffer = Bytes.create read_size in
+  match Unix.read t.fd_in buffer 0 read_size with
   | n when n > 0 ->
-    let b = Bytes.extend buffer 0 (n - 256) in
-    let out = write_bytes out b in
-    read in_fd out
-  | _ -> out
-  | exception _ -> out
+    (* Cut away bytes not read yet *)
+    let b = Bytes.extend buffer 0 (n - read_size) in
+    write_bytes t b
+    (* No - Lets see if select will call us again. read in_fd out *)
+  | _ -> exit 0
 
-let run data =
-  let out_fds =
-    ref (List.map (fun (_, filename) -> (filename, open_file filename, true)) data)
-  in
-  let in_fds = List.map (fun (in_fd, _) ->
-      Unix.set_nonblock in_fd; in_fd) data
-  in
-  let rotate = ref false in
+let rotate = ref false
 
+let handle_sighub t _ =
+  List.iter (fun t -> write_bytes t "Sighup retrieved. Rotating.\n") t;
+  rotate := true
+
+let run t =
+  (* List.iter (fun t -> Unix.set_nonblock t.fd_in) t; *)
   Sys.set_signal Sys.sighup
-    (Sys.Signal_handle
-       (fun _ ->
-          List.iter (fun (_, fd, _) ->
-              write_bytes (fd, false) "\nSighup retrieved. Rotating.\n" |> ignore) !out_fds;
-          rotate := true));
+    (Sys.Signal_handle (handle_sighub t));
 
+  let in_fds = List.map (fun t -> t.fd_in) t in
   while true do
     (* Use select to read from fd's *)
-    Unix.select in_fds [] [] (-1.0) |> ignore;
+    try
+      let (fd_rdy, _, _) = Unix.select in_fds [] [] (-1.0) in
+      (* Read from all t's in ins *)
+      t
+      |> List.filter (fun t -> List.mem t.fd_in fd_rdy)
+      |> List.iter read;
+    with
+    | Unix.Unix_error(Unix.EINTR, _, _) -> ();
 
-    out_fds := List.map2
-        (fun in_fd (fn, out_fd, s) ->
-           let (_, s) = read in_fd (out_fd, s) in
-           (fn, out_fd, s)
-        )
-        in_fds !out_fds;
+    (* Test if we need to rorate *)
+    if !rotate then
+      begin
+        List.iter (fun t ->
+            Unix.close t.fd_out;
+            t.fd_out <- open_file t.filename;
+            t.new_line <- true;
+            write_bytes t "Log file rotated\n") t;
 
-    if !rotate then begin
-        out_fds := List.map
-            (fun (fn, _, _) ->
-               let out_fd = (open_file fn) in
-               write_bytes (out_fd, true) "Log file rotated\n" |> ignore;
-               (fn, out_fd, true)
-            ) !out_fds;
-        rotate := false;
-    end
+        rotate := false
+      end
   done
 
 let () =
   let rec read_data n =
     match (n < Array.length Sys.argv) with
     | true ->
-      let fd = Sys.argv.(n) |> int_of_string |> ExtUnixAll.file_descr_of_int in
+      let fd_in = Sys.argv.(n) |> int_of_string |> ExtUnixAll.file_descr_of_int in
       let filename = Sys.argv.(n+1) in
-      (fd, filename) :: read_data (n+2)
+      let fd_out = open_file filename in
+      { fd_in; filename; fd_out; new_line = true } :: read_data (n + 2)
     | false -> []
   in
   run (read_data 1)

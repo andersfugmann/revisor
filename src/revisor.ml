@@ -25,20 +25,16 @@ let rec reap_children queue =
   | 0, _ -> ()
   | pid, Unix.WSTOPPED sig_no ->
     (* log "Child stopped: %d(%d)" pid sig_no; *)
-    Extern.ptrace_cont pid sig_no |> ignore;
-    reap_children queue
+    Extern.ptrace_cont pid sig_no |> ignore
   | pid, Unix.WEXITED _s ->
     (* log "Child exited: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue;
-    reap_children queue
+    Queue.add (Term pid) queue
   | pid, Unix.WSIGNALED _s ->
     (* log "Child signaled: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue;
-    reap_children queue
+    Queue.add (Term pid) queue
   | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) -> ()
   | exception e ->
     log "Exception in signal handler: %s" (Printexc.to_string e)
-
 
 (* Create a function for chaning state - To log and save state changes *)
 let process_start name = function

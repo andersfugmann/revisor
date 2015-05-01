@@ -47,6 +47,9 @@ let redirect name ?uid ?gid ?nice fn1 fn2 =
     Option.may Unix.setgid gid;
     Option.may (Unix.nice %> ignore) nice;
 
+    Unix.close write_fd1;
+    Unix.close write_fd2;
+
     (* Should do exec *)
     let read_fd_str1 =
       read_fd1 |> ExtUnixAll.int_of_file_descr |> string_of_int
