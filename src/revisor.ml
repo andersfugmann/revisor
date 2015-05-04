@@ -12,39 +12,27 @@ type event =
 type target_state = Enabled
                   | Disabled
 
-let process_tbl = Hashtbl.create 0 (* name -> process decription *)
-let state_tbl = Hashtbl.create 0
-let pid_tbl = Hashtbl.create 0 (* pid -> name *)
-let target_tbl = Hashtbl.create 0
+type name = string
+type pid = int
+
+type t = {
+  process_tbl: (name, Process.t) Hashtbl.t;
+  state_tbl: (name, State.state) Hashtbl.t;
+  pid_tbl: (pid, name) Hashtbl.t;
+  target_tbl: (name, target_state) Hashtbl.t;
+}
 
 let now () = Unix.gettimeofday () *. 1000.0 |> truncate
-(* Just process state change requests. Cannot be used to enable / disable processes *)
-
-let rec reap_children queue =
-  match Unix.waitpid [Unix.WNOHANG] (-1) with
-  | 0, _ -> ()
-  | pid, Unix.WSTOPPED sig_no ->
-    (* log "Child stopped: %d(%d)" pid sig_no; *)
-    Extern.ptrace_cont pid sig_no |> ignore
-  | pid, Unix.WEXITED _s ->
-    (* log "Child exited: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue
-  | pid, Unix.WSIGNALED _s ->
-    (* log "Child signaled: %d(%d)" pid s; *)
-    Queue.add (Term pid) queue
-  | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) -> ()
-  | exception e ->
-    log "Exception in signal handler: %s" (Printexc.to_string e)
 
 (* Create a function for chaning state - To log and save state changes *)
-let process_start name = function
+let process_start t name = function
   | Running _ as s -> s
   | Stopping _ as s -> s
   | Stopped  ->
     (* Start the process *)
-    let pd = Hashtbl.find process_tbl name in
-    let (pid, r_pid) =  Process.start pd in
-    List.iter (fun (p, _) -> Hashtbl.add pid_tbl p name) [pid; r_pid];
+    let pd = Hashtbl.find t.process_tbl name in
+    let (pid, r_pid) = Process.start pd in
+    List.iter (fun (p, _) -> Hashtbl.add t.pid_tbl p name) [pid; r_pid];
     Running (pid, r_pid)
 
 let process_stop = function
@@ -56,10 +44,10 @@ let process_stop = function
   | Stopping _ as s -> s
   | Stopped as s -> s
 
-let process_term name s_pid = function
+let process_term t name s_pid = function
   | Running (pid, r_pid) when s_pid = fst pid ->
     (* log "Received signal from %s (%d)" name pid; *)
-    Hashtbl.remove pid_tbl (fst pid);
+    Hashtbl.remove t.pid_tbl (fst pid);
     Unix.kill (fst r_pid) Sys.sigterm;
     Stopping (None, Some r_pid, now ())
 
@@ -80,36 +68,37 @@ let process_term name s_pid = function
     failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
 
 
-let process_event event =
+let process_event t event =
   let name, new_state = match event with
     | Start name ->
-      let s = State.state state_tbl name in
-      name, process_start name s
+      let s = State.state t.state_tbl name in
+      name, process_start t name s
     | Stop name ->
-      let s = State.state state_tbl name in
+      let s = State.state t.state_tbl name in
       name, process_stop s
 
     | Term pid ->
-      let name = Hashtbl.find pid_tbl pid in
-      let s = State.state state_tbl name in
-      name, process_term name pid s
+      let name = Hashtbl.find t.pid_tbl pid in
+      let s = State.state t.state_tbl name in
+      name, process_term t name pid s
   in
   (* At this point, we update the state table.
      We want to have a system to keep track of state changes for
      processes and keep track of how long a process has been in a given3 state
   *)
-  State.update_state state_tbl name new_state
+  State.update_state t.state_tbl name new_state
 
 
 let string_of_target = function
   | Enabled -> "enabled"
   | Disabled -> "disabled"
-(* Check is a process needs to be started or stopped
-   During booting we dont want the stop or start any processes
+
+(** Check is a process needs to be started or stopped
+    During booting we dont want the stop or start any processes
 *)
-let check name =
-  let state = State.state state_tbl name in
-  let target = Hashtbl.find target_tbl name in
+let check t name =
+  let state = State.state t.state_tbl name in
+  let target = Hashtbl.find t.target_tbl name in
   match state, target with
   | Stopping (_, _, ts), _ when ts + 5 < (now ()) ->
     Some (Stop name)
@@ -121,65 +110,10 @@ let check name =
     Some (Start name)
   | _ -> None
 
-let rec event_loop queue =
-  match Queue.Exceptionless.take queue with
-  | Some event ->
-    begin
-        process_event event;
-    end;
-    event_loop queue
-
-  | None ->
-    (* See if any state changes are needed *)
-    Enum.append
-      (Hashtbl.keys target_tbl)
-      (State.keys state_tbl)
-    |> List.of_enum
-    |> List.sort_unique compare
-    |> List.filter_map check
-    |> List.iter (fun e -> Queue.push e queue);
-
-    reap_children queue;
-
-    begin
-      match Queue.is_empty queue with
-      | true ->
-        (* Instead of sleeping, wait for a command message.
-           We assume that signals from childs will interrupt the ZMQ recv.
-           This means that we are 100% reactive *)
-        Unix.sleep 1
-      | false -> ()
-    end;
-    event_loop queue
-
-(** Need to implement own handling of wait_pid *)
-let rec handle_child_death _signal =
-  (* We really dont need to do anything, as the main loop will
-     reap dead children *)
-  ()
-
-(** Reload old state *)
-let update_state (name, state) =
-  log "Reattach process: %s" name;
-  let pids = State.pids_of_state state.State.state in
-  List.iter (Extern.ptrace_seize %> ignore) pids;
-  List.iter (fun p -> Hashtbl.add pid_tbl p name) pids;
-  Hashtbl.add state_tbl name state
-
-let _ =
-  Printf.eprintf "Revisor started\n%!";
-  let queue = Queue.create () in
-  Sys.(set_signal Sys.sigchld (Signal_handle handle_child_death));
-
-  Load.load "etc"
-  |> List.iter (fun pd ->
-      let open Process in
-      pd |> Process.to_yojson |> Yojson.Safe.pretty_to_string |> print_endline;
-      (* Set target_state to enabled *)
-      Hashtbl.add process_tbl pd.name pd;
-      Hashtbl.add target_tbl pd.name Enabled
-    );
-
-  List.iter update_state (State.init ());
-
-  event_loop queue
+let init () =
+  {
+    process_tbl = Hashtbl.create 0;
+    state_tbl = Hashtbl.create 0;
+    pid_tbl = Hashtbl.create 0;
+    target_tbl = Hashtbl.create 0;
+  }
