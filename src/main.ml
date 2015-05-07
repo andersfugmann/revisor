@@ -36,17 +36,12 @@ let rec handle_child_death _signal =
      reap dead children *)
   ()
 
-let handle_event t evt name =
-  Revisor.process_event t evt;
-  Revisor.check t name
-  |> Option.may (Revisor.process_event t)
-
 let rec event_loop t =
   Enum.from_while reap_children
   |> Enum.iter (fun p ->
-      p
-      |> Hashtbl.Exceptionless.find t.Revisor.pid_tbl
-      |> Option.may (handle_event t (Revisor.Term p))
+      let name = Hashtbl.find t.Revisor.pid_tbl p in
+      Revisor.process_term t name p;
+      Revisor.check t name
     );
 
   (* See if any state changes are needed *)
@@ -55,11 +50,14 @@ let rec event_loop t =
     (State.keys t.Revisor.state_tbl)
   |> List.of_enum
   |> List.sort_unique compare
-  |> List.filter_map (Revisor.check t)
-  |> List.iter (Revisor.process_event t);
+  |> List.iter (Revisor.check t);
 
   Unix.sleep 1;
   event_loop t
+
+(** We have states for running or stopping processes.
+    If all stopped processes also had a state, this would not be a problem.
+*)
 
 
 let main () =

@@ -4,11 +4,6 @@ open State
 
 (* Everything is keys on pd.name. That is unique *)
 
-type event =
-  | Term of pid_t
-  | Start of string
-  | Stop of string
-
 type target_state = Enabled
                   | Disabled
 
@@ -25,69 +20,53 @@ type t = {
 let now () = Unix.gettimeofday () *. 1000.0 |> truncate
 
 (* Create a function for chaning state - To log and save state changes *)
-let process_start t name = function
-  | Running _ as s -> s
-  | Stopping _ as s -> s
+let process_start t name =
+  match State.state t.state_tbl name with
+  | Running _ -> ()
+  | Stopping _ -> ()
   | Stopped  ->
     (* Start the process *)
     let pd = Hashtbl.find t.process_tbl name in
     let (pid, r_pid) = Process.start pd in
-    List.iter (fun (p, _) -> Hashtbl.add t.pid_tbl p name) [pid; r_pid];
-    Running (pid, r_pid)
+    Hashtbl.add t.pid_tbl (fst pid) name;
+    Hashtbl.add t.pid_tbl (fst r_pid) name;
+    Running (pid, r_pid) |> State.update_state t.state_tbl name
 
-let process_stop = function
+let process_stop t name =
+  match State.state t.state_tbl name with
   | State.Running (pid, r_pid) ->
     Unix.kill (fst pid) Sys.sigterm;
-    Stopping (Some pid, Some r_pid, now ())
+    Stopping (Some pid, Some r_pid, now ()) |> State.update_state t.state_tbl name
   | Stopping (None, None, _) ->
-    Stopped
-  | Stopping _ as s -> s
-  | Stopped as s -> s
+    Stopped |> State.update_state t.state_tbl name
+  | Stopping _ -> ()
+  | Stopped -> ()
 
-let process_term t name s_pid = function
+let process_term t name s_pid =
+  match State.state t.state_tbl name with
   | Running (pid, r_pid) when s_pid = fst pid ->
     (* log "Received signal from %s (%d)" name pid; *)
     Hashtbl.remove t.pid_tbl (fst pid);
     Unix.kill (fst r_pid) Sys.sigterm;
-    Stopping (None, Some r_pid, now ())
+    Stopping (None, Some r_pid, now ()) |> State.update_state t.state_tbl name
 
   | Running (pid, r_pid) when s_pid = fst r_pid ->
     (* log "Failure: one of the redirect processes for %s died" name; *)
     Unix.kill (fst pid) Sys.sigterm;
-    Stopping (Some pid, None, now ())
+    Stopping (Some pid, None, now ()) |> State.update_state t.state_tbl name
+
 
   | Stopping (Some pid, r_pid, ts) when s_pid = fst pid ->
     Option.may (fun pid -> Unix.kill (fst pid) Sys.sigterm) r_pid;
-    Stopping (None, r_pid, ts)
+    Stopping (None, r_pid, ts) |> State.update_state t.state_tbl name
+
 
   | Stopping (pid, Some r_pid, ts) when s_pid = fst r_pid ->
     Option.may (fun pid -> Unix.kill (fst pid) Sys.sigterm) pid;
-    Stopping (pid, None, ts)
+    Stopping (pid, None, ts) |> State.update_state t.state_tbl name
 
   | _ ->
     failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
-
-
-let process_event t event =
-  let name, new_state = match event with
-    | Start name ->
-      let s = State.state t.state_tbl name in
-      name, process_start t name s
-    | Stop name ->
-      let s = State.state t.state_tbl name in
-      name, process_stop s
-
-    | Term pid ->
-      let name = Hashtbl.find t.pid_tbl pid in
-      let s = State.state t.state_tbl name in
-      name, process_term t name pid s
-  in
-  (* At this point, we update the state table.
-     We want to have a system to keep track of state changes for
-     processes and keep track of how long a process has been in a given3 state
-  *)
-  State.update_state t.state_tbl name new_state
-
 
 let string_of_target = function
   | Enabled -> "enabled"
@@ -96,19 +75,30 @@ let string_of_target = function
 (** Check is a process needs to be started or stopped
     During booting we dont want the stop or start any processes
 *)
+
+(* TODO: Merge current_state and target state into the same table.
+   Disabled, Stopped state can be elliminated, and its easier to check
+   to state change actions needed (Just iterate over keys, values)
+
+   Oh. And the check function can do that itself, as the hashtbl
+   contains all needed information. Just be careful not to alter the
+   table while iterating.
+   (* Maybe map is the right thing to do? Is there an effective inplace map? *)
+*)
+
 let check t name =
   let state = State.state t.state_tbl name in
   let target = Hashtbl.find t.target_tbl name in
   match state, target with
   | Stopping (_, _, ts), _ when ts + 5 < (now ()) ->
-    Some (Stop name)
+    process_stop t name
   | Stopping (None, None, _), _ ->
-    Some (Stop name)
+    process_stop t name
   | Running _, Disabled ->
-    Some (Stop name)
+    process_stop t name
   | Stopped, Enabled ->
-    Some (Start name)
-  | _ -> None
+    process_start t name
+  | _ -> (* Oh - Catch all *) ()
 
 let init () =
   {

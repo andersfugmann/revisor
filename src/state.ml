@@ -105,9 +105,7 @@ let update_state t name new_state =
   in
   let state = { state with state = new_state } in
   save name state;
-  match new_state with
-  | Stopped -> Hashtbl.remove t name
-  | _ -> Hashtbl.replace t name state
+  Hashtbl.replace t name state
 
 let state t name =
   (** Assume non existent names to be stopped *)
