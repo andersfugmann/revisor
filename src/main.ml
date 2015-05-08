@@ -48,9 +48,7 @@ let rec event_loop t =
   Enum.append
     (Hashtbl.keys t.Revisor.target_tbl)
     (State.keys t.Revisor.state_tbl)
-  |> List.of_enum
-  |> List.sort_unique compare
-  |> List.iter (Revisor.check t);
+  |> Enum.iter (Revisor.check t);
 
   Unix.sleep 1;
   event_loop t
