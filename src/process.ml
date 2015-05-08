@@ -1,20 +1,18 @@
 open Batteries
 open Log
 
-type env = {
-  key: string;
-  value: string;
-} [@@deriving yojson]
+type key = string [@@deriving yojson]
+type value = string [@@deriving yojson]
+type env = (key * value) [@@deriving yojson]
 
 type t = {
   name: string;
   command: string;
-  args: string list;
-  uid: int option;
-  gid: int option;
-  nice: int option;
+  uid: int option [@default None];
+  gid: int option [@default None];
+  nice: int option [@default None];
   processes: int [@default 1];
-  environment: env list;
+  environment: env list [@default []];
 } [@@deriving yojson]
 
 (* Can be block signal delivery while starting processes??? *)
@@ -82,10 +80,11 @@ let start pd =
       dup2 new_stdout stdout;
 
       (* Setup the environment. Currenly always inherit parent env *)
-      List.iter (function {key; value} -> putenv key value) pd.environment;
+      List.iter (function (key, value) -> putenv key value) pd.environment;
       log "Started child.";
       try
-        Unix.execv pd.command (Array.of_list (pd.name :: pd.args))
+        let args = String.nsplit ~by:" " pd.command in
+        Unix.execv (List.hd args) (Array.of_list (pd.name :: List.tl args))
       with
       | e -> log "execv failed: %s" (Printexc.to_string e);
         (* Should log perror *)

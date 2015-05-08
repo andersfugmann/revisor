@@ -23,7 +23,7 @@ let load_file f =
   |> Yojson.Safe.from_file
   |> Process.of_yojson
   |> function `Ok v -> v
-            | `Error s -> failwith s
+            | `Error s -> failwith ("Error while loading config file: " ^ f ^ ". Error was: " ^ s)
 
 let load dir =
   Sys.readdir dir
