@@ -4,13 +4,12 @@ open Batteries
 let conf_dir = "etc"
 let suffix = ".json"
 
-
 (** Change a spec into a list of specs if multiple processes are
     requested *)
 let expand = function
-  | { Process.processes = 1; _ } as p -> [ p ]
+  | { Process.processes = 1; _ } as p -> Enum.singleton p
   | { Process.processes; name; _} as p when processes > 1 ->
-    List.init processes
+    Enum.init processes
       (fun n -> { p with Process.processes = 1;
                          name = Printf.sprintf "%s:%d" name n
                 }
@@ -28,18 +27,17 @@ let load_file f =
   |> tap print_endline
   |> Yojson.Safe.from_file
   |> (function
-      | `List l -> List.map (spec_of_json f) l
-      | j -> [ (spec_of_json f) j ])
+      | `List l -> Enum.map (spec_of_json f) (List.enum l)
+      | j -> Enum.singleton (spec_of_json f j)
+    )
 
 let load dir =
   Sys.readdir dir
-  |> Array.to_list
-  |> List.filter (fun f -> Filename.check_suffix f suffix)
-  |> List.map (fun l -> dir ^ "/" ^ l)
-  |> List.map load_file
-  |> List.flatten
-  |> List.map expand
-  |> List.flatten
+  |> Array.enum
+  |> Enum.filter (fun f -> Filename.check_suffix f suffix)
+  |> Enum.map (fun l -> dir ^ "/" ^ l)
+  |> Enum.concat_map load_file
+  |> Enum.concat_map expand
 
 (** The idea is a a reload finds all files in dir and sends a reload event.
     For those tasks where no changes have been made, we leave them be.

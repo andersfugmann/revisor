@@ -62,7 +62,7 @@ let main () =
   let t = Revisor.init () in
 
   Load.load Config.conf_dir
-  |> List.iter (fun pd ->
+  |> Enum.iter (fun pd ->
       let open Process in
       pd |> Process.to_yojson |> Yojson.Safe.pretty_to_string |> print_endline;
       (* Set target_state to enabled *)
