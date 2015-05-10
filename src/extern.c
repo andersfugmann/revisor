@@ -14,6 +14,12 @@ CAMLprim value caml_ptrace_seize(value pid) {
     CAMLreturn(Val_int(res));
 }
 
+CAMLprim value caml_ptrace_detach(value pid) {
+    CAMLparam1(pid);
+    int res = ptrace(PTRACE_DETACH, Int_val(pid), NULL, NULL);
+    CAMLreturn(Val_int(res));
+}
+
 CAMLprim value caml_ptrace_cont(value pid, value sig) {
     CAMLparam2(pid, sig);
     int sig_no = caml_convert_signal_number(Int_val(sig));

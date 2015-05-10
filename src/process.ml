@@ -13,9 +13,9 @@ type t = {
   nice: int option [@default None];
   processes: int [@default 1];
   environment: env list [@default []];
+  auto_start: bool [@default true]
 } [@@deriving yojson]
 
-(* Can be block signal delivery while starting processes??? *)
 let start_time =
   (* Read field 22 (%llu) *)
   let re = Str.regexp "[0-9]+ ([^)]*) . \\(\\([-]?[0-9]+ \\)*\\)" in
@@ -96,4 +96,12 @@ let start pd =
     let p_start_time = start_time pid in
     let r_start_time = start_time redirect_pid in
     (* log "Forked child pid: %d" pid; *)
-    ((pid, p_start_time), (redirect_pid, r_start_time));
+    ((pid, p_start_time), (redirect_pid, r_start_time))
+
+
+let is_running (pid, time) =
+  match start_time pid with
+  | start_time -> start_time = time
+  | exception _ ->
+    (* File not there, no access et. al *)
+    false

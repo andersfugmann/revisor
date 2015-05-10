@@ -30,7 +30,6 @@ vmount(-l, src, _build)
   FILES[] =
 	config
 	main
-	state
 	revisor
 	process
 	log
