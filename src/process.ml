@@ -81,12 +81,12 @@ let start pd =
 
       (* Setup the environment. Currenly always inherit parent env *)
       List.iter (function (key, value) -> putenv key value) pd.environment;
-      log "Started child.";
+      log `Debug "Started child.";
       try
         let args = String.nsplit ~by:" " pd.command in
         Unix.execv (List.hd args) (Array.of_list (pd.name :: List.tl args))
       with
-      | e -> log "execv failed: %s" (Printexc.to_string e);
+      | e -> log `Warning "execv failed: %s" (Printexc.to_string e);
         (* Should log perror *)
         failwith "exec failed"
     end

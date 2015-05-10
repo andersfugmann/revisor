@@ -40,7 +40,7 @@ let load filename =
   |> elt_of_yojson
   |> (function `Ok elt -> Some elt
             | `Error s ->
-              log "Error loading file: %s" s;
+              log `Warning "Error loading file: %s" s;
               None)
 
 
@@ -62,7 +62,7 @@ let update_state t name new_state =
       | true -> (old_ts, new_state)
       | false ->
         let now = now () in
-        Log.log "%s: %s -> %s after %d msec"
+        Log.log `Debug "%s: %s -> %s after %d msec"
           name
           (name_of_state old_state)
           (name_of_state new_state)
@@ -71,23 +71,16 @@ let update_state t name new_state =
     in
     { pd with state; }
   in
-  Hashtbl.modify name (update new_state) t.procs
-
+  Hashtbl.modify name (update new_state) t.procs;
+  save name (Hashtbl.find t.procs name) (* We should just pass the elt *)
 
 let state_of_name t name =
   let s = Hashtbl.find t.procs name in
   snd s.state
 
-let state_of_pid t pid =
-  Hashtbl.find t.pids pid
-  |> state_of_name t
-
 let spec_of_name t name =
   let s = Hashtbl.find t.procs name in
   s.spec
-
-let name_of_pid t pid =
-  Hashtbl.find t.pids pid
 
 let kill signal pid =
   match Process.is_running pid with
@@ -157,7 +150,7 @@ let process_term t name s_pid =
     Stopping (Some pid, None, ts) |> update_state t name
 
   | state ->
-    log "Illegal state for term: %s" (state_to_yojson state |> Yojson.Safe.pretty_to_string);
+    log `Fatal "Illegal state for term: %s" (state_to_yojson state |> Yojson.Safe.pretty_to_string);
 
     failwith (Printf.sprintf "pid %d is not a member of %s" s_pid name)
 
@@ -165,16 +158,20 @@ let string_of_target = function
   | Enabled -> "enabled"
   | Disabled -> "disabled"
 
-let check t name =
+let rec check t name =
   match Hashtbl.find t.procs name with
   | { state = _, Stopping (_, _, ts);  _ } when ts + 5 < (now ()) ->
-    process_stop t name
+    process_stop t name;
+    check t name
   | { state = _, Stopping (None, None, _); _ } ->
-    process_stop t name
+    process_stop t name;
+    check t name
   | { state = _, Running _; target = Disabled; _ } ->
-    process_stop t name
+    process_stop t name;
+    check t name
   | { state = _, Stopped; target = Enabled; _} ->
-    process_start t name
+    process_start t name;
+    check t name
   | _ -> ()
 
 let check_all t =
@@ -186,6 +183,12 @@ let pids_of_state = function
   | Running(p1, p2) -> [p1; p2]
   | Stopping(p1, p2, _) -> List.filter_map identity [p1; p2]
   | Stopped -> []
+
+
+let set_target t name target =
+  log `Info "Setting target of process %s to %s" name (string_of_target target);
+  Hashtbl.modify name (fun p -> { p with target }) t.procs;
+  check t name
 
 let init () =
   Sys.readdir Config.run_dir
