@@ -33,11 +33,11 @@ let reap_children t =
     None
 
 let update_proc t proc =
-  Hashtbl.modify proc.Revisor.spec.Process.name
+  Hashtbl.modify_opt proc.Revisor.spec.Process.name
     (fun p ->
-       Revisor.pids p |> List.map fst |> List.iter (Hashtbl.remove t.pids);
+       Option.may (fun p -> Revisor.pids p |> List.map fst |> List.iter (Hashtbl.remove t.pids)) p;
        Revisor.pids proc |> List.map fst |> List.iter (fun p -> Hashtbl.add t.pids p proc.Revisor.spec.Process.name);
-       proc
+       Some (proc)
     ) t.procs
 
 (* Setup an alarm, and match on that. I dont like control flow using signals *)
@@ -46,8 +46,8 @@ let rec event_loop signal_fd t =
     match Unix.select [signal_fd] [] [] 1.0 with
     | (_ :: _, _, _) ->
       ExtUnixAll.signalfd_read signal_fd |> ignore;
-      reap_children t
-      |> Option.may
+      Enum.from_while (fun () -> reap_children t)
+      |> Enum.iter
         (fun p ->
            let name = try Hashtbl.find t.pids p with _ -> failwith (Printf.sprintf "pid %d not found in %s" p (dump (Hashtbl.enum t.pids |> List.of_enum))) in
            Hashtbl.remove t.pids p;
@@ -56,9 +56,7 @@ let rec event_loop signal_fd t =
            |> Revisor.check
            |> update_proc t
         )
-    | _ ->
-      (* Could be starved, if a process dies every second *)
-      t.procs |> Hashtbl.values |> Enum.map Revisor.check |> Enum.iter (update_proc t)
+    | _ -> t.procs |> Hashtbl.values |> Enum.map Revisor.check |> Enum.iter (update_proc t);
   end;
   event_loop signal_fd t
 
@@ -123,11 +121,12 @@ let main () =
     pids |> Enum.map (fun (name, (pid, _)) -> pid, name) |> Hashtbl.of_enum
   in
 
+  let t = { procs; pids } in
+
   (* Send process term signal to all processes. *)
   terminated
-  |> Enum.iter (fun (name, (s_pid, _)) -> Hashtbl.modify name (fun p -> Revisor.process_term p s_pid) procs);
+  |> Enum.iter (fun (name, (s_pid, _)) -> Revisor.process_term (Hashtbl.find t.procs name) s_pid |> update_proc t);
 
-  let t = { procs; pids } in
   reload t;
 
   event_loop signal_fd t
