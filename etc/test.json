@@ -1,6 +1,6 @@
 {
   "name": "test",
-  "command": "_build/test 1000 2000",
+  "command": "_build/test 1500 1501",
   "uid": null,
   "gid": null,
   "nice": null,
