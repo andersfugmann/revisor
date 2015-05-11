@@ -1,7 +1,7 @@
 open Batteries
 open Log
 
-let rec reap_children t =
+let reap_children t =
   match Unix.waitpid [Unix.WNOHANG] (-1) with
   | 0, _ ->
     None
@@ -13,8 +13,7 @@ let rec reap_children t =
     | false ->
       log `Info "Detach pid: %d. Not ours" pid;
       Extern.ptrace_detach pid) |> ignore;
-
-    reap_children t
+    None
   | pid, Unix.WEXITED _s ->
     (* log `Debug "Child exited: %d(%d)" pid s; *)
     Some pid
@@ -27,32 +26,23 @@ let rec reap_children t =
     log `Debug "Exception in signal handler: %s" (Printexc.to_string e);
     None
 
-(** Need to implement own handling of wait_pid *)
-let rec handle_child_death _signal =
-  (* We really dont need to do anything, as the main loop will
-     reap dead children *)
-  log `Info "Received signal";
-  ()
-
-let wait_signal signal_fd =
-  match Unix.select [signal_fd] [] [] 1.0 with
-  | (_ :: _, _, _) -> ExtUnixAll.signalfd_read signal_fd |> ignore
-  | _ -> ()
-
+(* Setup an alarm, and match on that. I dont like control flow using signals *)
 let rec event_loop signal_fd t =
-  Enum.from_while (fun () -> reap_children t)
-  |> Enum.iter (fun p -> Revisor.process_term t (Hashtbl.find t.Revisor.pids p) p);
-
-  (* See if any state changes are needed *)
-  Revisor.check_all t;
-
-  wait_signal signal_fd;
-
+  begin
+    match Unix.select [signal_fd] [] [] 1.0 with
+    | (_ :: _, _, _) ->
+      ExtUnixAll.signalfd_read signal_fd |> ignore;
+      reap_children t
+      |> Option.may
+      @@ fun p ->
+      let name = Hashtbl.find t.Revisor.pids p in
+      Revisor.process_term t name p;
+      Revisor.check t name
+    | _ ->
+      (* Could be starved, if a process dies every second *)
+      Revisor.check_all t
+  end;
   event_loop signal_fd t
-
-(** We have states for running or stopping processes.
-    If all stopped processes also had a state, this would not be a problem.
-*)
 
 let reload t =
   let specs = Load.load Config.conf_dir in
@@ -82,6 +72,9 @@ let attach (_name, pid) =
 
 
 let main () =
+  Unix.(sigprocmask SIG_BLOCK [ Sys.sigchld ]) |> ignore;
+  let signal_fd = ExtUnixAll.signalfd ~sigs:[ Sys.sigchld ] ~flags:[] () in
+
   let procs = Revisor.init () in
   (* Attach all pids *)
 
@@ -108,12 +101,8 @@ let main () =
 
   reload t;
 
-  Unix.(sigprocmask SIG_BLOCK [ Sys.sigchld ]) |> ignore;
-  let signal_fd = ExtUnixAll.signalfd ~sigs:[ Sys.sigchld ] ~flags:[] () in
-
   event_loop signal_fd t
 
 let _ =
   log `Info "Revisor started\n%!";
-  (* Sys.(set_signal Sys.sigchld (Signal_handle handle_child_death)); *)
   main ()
