@@ -152,12 +152,6 @@ let pids t =
   | Stopping(p1, p2, _) -> List.filter_map identity [p1; p2]
   | Stopped -> []
 
-let is_running t =
-  match snd t.state with
-  | Running _ -> true
-  | Stopping _
-  | Stopped -> false
-
 let set_target t target =
   log `Info "Setting target of process %s to %s" t.spec.Process.name (string_of_target target);
   { t with target } |> check

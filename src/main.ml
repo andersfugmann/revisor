@@ -33,13 +33,12 @@ let reap_children t =
     None
 
 let update_proc t proc =
-  Hashtbl.replace t.procs proc.Revisor.spec.Process.name proc;
-  match Revisor.is_running proc with
-  | false -> ()
-  | true ->
-    Revisor.pids proc
-    |> List.map fst
-    |> List.iter (fun p -> Hashtbl.replace t.pids p proc.Revisor.spec.Process.name)
+  Hashtbl.modify proc.Revisor.spec.Process.name
+    (fun p ->
+       Revisor.pids p |> List.map fst |> List.iter (Hashtbl.remove t.pids);
+       Revisor.pids proc |> List.map fst |> List.iter (fun p -> Hashtbl.add t.pids p proc.Revisor.spec.Process.name);
+       proc
+    ) t.procs
 
 (* Setup an alarm, and match on that. I dont like control flow using signals *)
 let rec event_loop signal_fd t =
@@ -50,7 +49,7 @@ let rec event_loop signal_fd t =
       reap_children t
       |> Option.may
         (fun p ->
-           let name = Hashtbl.find t.pids p in
+           let name = try Hashtbl.find t.pids p with _ -> failwith (Printf.sprintf "pid %d not found in %s" p (dump (Hashtbl.enum t.pids |> List.of_enum))) in
            Hashtbl.remove t.pids p;
            Hashtbl.find t.procs name
            |> (fun proc -> Revisor.process_term proc p)
@@ -59,7 +58,7 @@ let rec event_loop signal_fd t =
         )
     | _ ->
       (* Could be starved, if a process dies every second *)
-      Hashtbl.map_inplace (fun _ proc -> Revisor.check proc) t.procs
+      t.procs |> Hashtbl.values |> Enum.map Revisor.check |> Enum.iter (update_proc t)
   end;
   event_loop signal_fd t
 
@@ -68,7 +67,9 @@ let reload t =
   specs
   |> List.iter (fun spec ->
       spec |> Process.to_yojson |> Yojson.Safe.pretty_to_string |> print_endline;
-      Hashtbl.modify_opt spec.Process.name (fun proc -> Some (Revisor.update_spec spec proc)) t.procs
+      Hashtbl.find_option t.procs spec.Process.name
+      |> Revisor.update_spec spec
+      |> update_proc t
     );
 
   let current =
@@ -104,13 +105,13 @@ let main () =
   let signal_fd = ExtUnixAll.signalfd ~sigs:[ Sys.sigchld ] ~flags:[] () in
 
   let procs = load_state () in
-  (* Attach all pids *)
+  log `Info "Loaded %d states." (Hashtbl.length procs);
 
+  (* Attach all pids *)
   let (pids, terminated) =
     procs
     |> Hashtbl.enum
-    |> Enum.map (fun (name, e) -> name, Revisor.pids e)
-    |> Enum.concat_map (fun (name, pids) -> List.map (fun p -> name, p) pids |> List.enum)
+    |> Enum.concat_map (fun (name, e) -> Revisor.pids e |> List.map (fun p -> name, p) |> List.enum)
     |> Enum.switch attach
   in
   log `Info "Reattached to %d pids" (Enum.count pids);
