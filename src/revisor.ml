@@ -1,10 +1,6 @@
 open Batteries
 open Log
 
-(* Everything is keys on pd.name. That is unique *)
-
-(* Could move state validation to seperate file with the spec of the state. *)
-
 type target_state = Enabled
                   | Disabled [@@deriving yojson]
 
@@ -69,7 +65,6 @@ let kill signal pid =
   match Process.is_running pid with
   | true -> Unix.kill (fst pid) signal
   | false -> ()
-
 
 (* Create a function for chaning state - To log and save state changes *)
 let process_start t =

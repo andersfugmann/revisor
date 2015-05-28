@@ -48,7 +48,6 @@ let redirect name ?uid ?gid ?nice fn1 fn2 =
     Unix.close write_fd1;
     Unix.close write_fd2;
 
-    (* Should do exec *)
     let read_fd_str1 =
       read_fd1 |> ExtUnixAll.int_of_file_descr |> string_of_int
     in
