@@ -34,7 +34,6 @@ let load filename =
               log `Warning "Error loading file: %s" s;
               None)
 
-
 let name_of_state = function
   | Running _  -> "Running"
   | Stopping _ -> "Stopping"

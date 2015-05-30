@@ -19,7 +19,7 @@ OCAMLFLAGS = -thread -g -w @A-4-29-33-39-41-44-45-48 -bin-annot
 USE_OCAMLFIND = true
 
 OCAMLPACKS[] =
-    batteries ppx_deriving_yojson yojson extunix ZMQ
+    batteries ppx_deriving_yojson yojson extunix ZMQ str unix
 
 mkdir -p _build
 vmount(-l, src, _build)
@@ -27,7 +27,8 @@ vmount(-l, src, _build)
 
   StaticCLibrary(extern, extern)
 
-  FILES[] =
+  section:
+      FILES[] =
 	config
 	main
 	revisor
@@ -35,16 +36,18 @@ vmount(-l, src, _build)
 	log
 	extern
 	load
+	commands
 
-  OCAML_CLIBS[] += extern
+      OCAML_CLIBS[] += extern
 
-  section:
+
       PROGRAM = revisor
       .DEFAULT: $(OCamlProgram $(PROGRAM), $(FILES))
 
   section:
+      FILES[] = commands config revisor process log
       PROGRAM = revisorctl
-      .DEFAULT: $(OCamlProgram $(PROGRAM), client_commands $(PROGRAM))
+      .DEFAULT: $(OCamlProgram $(PROGRAM), $(PROGRAM) $(FILES))
 
   section:
       OCAMLPACKS[] = batteries extunix

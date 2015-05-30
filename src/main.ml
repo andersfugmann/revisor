@@ -7,10 +7,13 @@ type t = {
   pids: (int, name) Hashtbl.t;
 }
 
+(* Stuff for getting commands *)
+
 let reap_children t =
-  match Unix.waitpid [Unix.WNOHANG] (-1) with
+  match Unix.(waitpid [WNOHANG] (-1)) with
   | 0, _ ->
     None
+  (* failwith "Cannot happen" (* None (* Some pending?? *) *) *)
   | pid, Unix.WSTOPPED sig_no ->
     (* log "Child stopped: %d(%d)" pid sig_no; *)
     (* Detatch if we dont want to listen anymore *)
@@ -21,10 +24,8 @@ let reap_children t =
       Extern.ptrace_detach pid) |> ignore;
     None
   | pid, Unix.WEXITED _s ->
-    (* log `Debug "Child exited: %d(%d)" pid s; *)
     Some pid
   | pid, Unix.WSIGNALED _s ->
-    (* log `Debug "Child signaled: %d(%d)" pid s; *)
     Some pid
   | exception Unix.Unix_error(Unix.ECHILD, "waitpid", _) ->
     None
@@ -35,39 +36,28 @@ let reap_children t =
 let update_proc t proc =
   Hashtbl.modify_opt proc.Revisor.spec.Process.name
     (fun p ->
-       Option.may (fun p -> Revisor.pids p |> List.map fst |> List.iter (Hashtbl.remove t.pids)) p;
-       Revisor.pids proc |> List.map fst |> List.iter (fun p -> Hashtbl.add t.pids p proc.Revisor.spec.Process.name);
+       Option.may (fun p -> Revisor.pids p
+                            |> List.map fst
+                            |> List.iter (Hashtbl.remove t.pids)) p;
+       Revisor.pids proc
+       |> List.map fst
+       |> List.iter (fun p ->
+           Hashtbl.add t.pids p proc.Revisor.spec.Process.name);
        Some (proc)
     ) t.procs
-
-(* Setup an alarm, and match on that. I dont like control flow using signals *)
-let rec event_loop signal_fd t =
-  begin
-    match Unix.select [signal_fd] [] [] 1.0 with
-    | (_ :: _, _, _) ->
-      ExtUnixAll.signalfd_read signal_fd |> ignore;
-      Enum.from_while (fun () -> reap_children t)
-      |> Enum.iter
-        (fun p ->
-           let name = try Hashtbl.find t.pids p with _ -> failwith (Printf.sprintf "pid %d not found in %s" p (dump (Hashtbl.enum t.pids |> List.of_enum))) in
-           Hashtbl.remove t.pids p;
-           Hashtbl.find t.procs name
-           |> (fun proc -> Revisor.process_term proc p)
-           |> Revisor.check
-           |> update_proc t
-        )
-    | _ -> t.procs |> Hashtbl.values |> Enum.map Revisor.check |> Enum.iter (update_proc t);
-  end;
-  event_loop signal_fd t
 
 let reload t =
   let specs = Load.load Config.conf_dir in
   specs
-  |> List.iter (fun spec ->
-      spec |> Process.to_yojson |> Yojson.Safe.pretty_to_string |> print_endline;
-      Hashtbl.find_option t.procs spec.Process.name
-      |> Revisor.update_spec spec
-      |> update_proc t
+  |> List.iter
+    (fun spec ->
+       spec
+       |> Process.to_yojson
+       |> Yojson.Safe.pretty_to_string
+       |> print_endline;
+       Hashtbl.find_option t.procs spec.Process.name
+       |> Revisor.update_spec spec
+       |> update_proc t
     );
 
   let current =
@@ -80,7 +70,79 @@ let reload t =
   Hashtbl.keys t.procs
   |> Set.of_enum
   |> (flip Set.diff) current
-  |> Set.iter (fun name -> Hashtbl.modify name (fun proc -> Revisor.set_target proc Revisor.Disabled) t.procs)
+  |> Set.iter (fun name ->
+      Hashtbl.modify name
+        (fun proc ->
+           Revisor.set_target proc Revisor.Disabled)
+        t.procs)
+
+let exec t f patterns =
+  let p = t.procs
+          |> Hashtbl.enum
+          |> Enum.filter (fst %> Commands.match_name patterns)
+          |> Enum.map snd
+          |> List.of_enum
+          |> List.map f
+  in
+  List.iter (update_proc t) p;
+  p
+
+let process_command t = function
+  | Commands.Status p ->
+    0, exec t identity p
+  | Commands.Stop p ->
+    0, exec t (flip Revisor.set_target Revisor.Disabled) p
+  | Commands.Start p ->
+    0, exec t (flip Revisor.set_target Revisor.Enabled) p
+  | Commands.Restart p ->
+    (* Restarting a process also sets it in enabled state *)
+    0, exec t (Revisor.process_stop %> (flip Revisor.set_target Revisor.Enabled)) p  (* We just stop the processes *)
+  | Commands.Reload  ->
+    reload t;
+    (0, [])
+
+
+
+let handle_command t socket =
+  ZMQ.Socket.recv socket
+  |> Yojson.Safe.from_string
+  |> Commands.of_yojson
+  |> (function `Ok v -> v | `Error s -> failwith s)
+  |> process_command t
+  |> Commands.result_to_yojson
+  |> Yojson.Safe.to_string
+  |> ZMQ.Socket.send socket
+
+let rec event_loop signal_fd socket t =
+  t.procs
+  |> Hashtbl.values
+  |> List.of_enum
+  |> List.map Revisor.check
+  |> List.iter (update_proc t);
+
+  begin
+    let socket_fd = ZMQ.Socket.get_fd socket in
+    match Unix.select [signal_fd; socket_fd] [] [] 1.0 with
+    | [], [], [] -> ()
+    | [f], [], [] when socket_fd = f ->
+      handle_command t socket
+    | _ ->
+      ExtUnixAll.signalfd_read signal_fd |> ignore;
+      (* Why are we loosing signals ? *)
+      Enum.from_while (fun () -> reap_children t)
+      |> Enum.iter (fun p ->
+          let name = try Hashtbl.find t.pids p with
+            | _ -> failwith (Printf.sprintf "pid %d not found in %s" p
+                               (dump (Hashtbl.enum t.pids |> List.of_enum)))
+          in
+          Hashtbl.remove t.pids p;
+          Hashtbl.find t.procs name
+          |> (fun proc -> Revisor.process_term proc p)
+          |> Revisor.check
+          |> update_proc t
+        );
+  end;
+  event_loop signal_fd socket t
 
 let attach (_name, pid) =
   (* No need to detatch, as we do that when reaping child processes *)
@@ -129,7 +191,14 @@ let main () =
 
   reload t;
 
-  event_loop signal_fd t
+  let ctx = ZMQ.Context.create() in
+  let socket =
+    let s = ZMQ.Socket.create ctx ZMQ.Socket.rep in
+    ZMQ.Socket.bind s Config.endpoint;
+    s
+  in
+
+  event_loop signal_fd socket t
 
 let _ =
   log `Info "Revisor started\n%!";
